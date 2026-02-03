@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fantasy Football Report Generator</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="logo">🏈</div>
+            <h1>Fantasy Football Report Generator</h1>
+            <p class="subtitle">Generate comprehensive historical reports for your Yahoo Fantasy league</p>
+        </header>
+
+        <!-- Not Authenticated View -->
+        <div id="auth-section" class="card">
+            <h2>Connect Your Yahoo Account</h2>
+            <p>To generate a report, you'll need to connect your Yahoo Fantasy account.</p>
+            <button id="login-btn" class="btn btn-primary btn-large">
+                <span class="btn-icon">🔗</span>
+                Connect with Yahoo
+            </button>
+        </div>
+
+        <!-- Authenticated View -->
+        <div id="main-section" class="card hidden">
+            <div class="user-status">
+                <span class="status-badge">✓ Connected to Yahoo</span>
+                <button id="logout-btn" class="btn btn-secondary btn-small">Logout</button>
+            </div>
+
+            <h2>Generate Your Report</h2>
+
+            <!-- League Selection -->
+            <div class="form-group">
+                <label for="league-select">Select a League</label>
+                <select id="league-select" class="form-control">
+                    <option value="">Loading your leagues...</option>
+                </select>
+                <p class="help-text">Or enter a league key manually below</p>
+            </div>
+
+            <div class="divider">
+                <span>or</span>
+            </div>
+
+            <div class="form-group">
+                <label for="league-key">Enter League Key</label>
+                <input type="text" id="league-key" class="form-control" placeholder="e.g., 461.l.333910">
+                <p class="help-text">
+                    Find this in your league URL: football.fantasysports.yahoo.com/f1/<strong>[league_id]</strong>
+                    <br>Format: {game_id}.l.{league_id} — <a href="#" id="help-link">Need help?</a>
+                </p>
+            </div>
+
+            <button id="generate-btn" class="btn btn-primary btn-large">
+                <span class="btn-icon">📊</span>
+                Generate Report
+            </button>
+        </div>
+
+        <!-- Progress Section -->
+        <div id="progress-section" class="card hidden">
+            <h2>Generating Your Report</h2>
+            <div class="progress-container">
+                <div class="progress-bar">
+                    <div id="progress-fill" class="progress-fill" style="width: 0%"></div>
+                </div>
+                <div id="progress-text" class="progress-text">Starting...</div>
+            </div>
+            <div id="progress-message" class="progress-message">Connecting to Yahoo Fantasy...</div>
+        </div>
+
+        <!-- Download Section -->
+        <div id="download-section" class="card hidden">
+            <div class="success-icon">✅</div>
+            <h2>Report Ready!</h2>
+            <p>Your fantasy football historical report has been generated.</p>
+            <a id="download-btn" href="#" class="btn btn-primary btn-large">
+                <span class="btn-icon">📥</span>
+                Download PDF Report
+            </a>
+            <button id="new-report-btn" class="btn btn-secondary">Generate Another Report</button>
+        </div>
+
+        <!-- Error Section -->
+        <div id="error-section" class="card hidden">
+            <div class="error-icon">❌</div>
+            <h2>Something Went Wrong</h2>
+            <p id="error-message">An error occurred while generating your report.</p>
+            <button id="retry-btn" class="btn btn-primary">Try Again</button>
+        </div>
+
+        <!-- Help Modal -->
+        <div id="help-modal" class="modal hidden">
+            <div class="modal-content">
+                <span class="modal-close">&times;</span>
+                <h2>Finding Your League Key</h2>
+                <div class="help-content">
+                    <h3>Step 1: Go to Your League</h3>
+                    <p>Navigate to your Yahoo Fantasy Football league in your browser.</p>
+
+                    <h3>Step 2: Look at the URL</h3>
+                    <p>Your URL will look like:</p>
+                    <code>https://football.fantasysports.yahoo.com/f1/333910</code>
+                    <p>The number at the end (<strong>333910</strong>) is your league ID.</p>
+
+                    <h3>Step 3: Add the Game ID</h3>
+                    <p>The league key format is: <code>{game_id}.l.{league_id}</code></p>
+
+                    <h4>Common Game IDs:</h4>
+                    <ul>
+                        <li>2025: <strong>461</strong></li>
+                        <li>2024: <strong>449</strong></li>
+                        <li>2023: <strong>423</strong></li>
+                        <li>2022: <strong>414</strong></li>
+                    </ul>
+
+                    <h3>Example</h3>
+                    <p>If your league ID is <strong>333910</strong> and it's a 2025 league:</p>
+                    <code>461.l.333910</code>
+                </div>
+            </div>
+        </div>
+
+        <footer>
+            <p>Made with ❤️ for Fantasy Football enthusiasts</p>
+            <p class="disclaimer">This app uses the Yahoo Fantasy Sports API. Not affiliated with Yahoo.</p>
+        </footer>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

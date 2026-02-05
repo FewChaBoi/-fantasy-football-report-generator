@@ -11,7 +11,6 @@ import numpy as np
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
-from matplotlib.backends.backend_agg import FigureCanvasAgg
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter, landscape
@@ -24,17 +23,12 @@ from reportlab.platypus import (
 )
 
 from yahoo_api import YahooFantasyAPI
-
-
-# Color scheme
-COLORS = {
-    'primary': colors.Color(0.1, 0.1, 0.15),
-    'accent': colors.Color(1.0, 0.5, 0.0),
-    'accent_gold': colors.Color(1.0, 0.84, 0.0),
-    'white': colors.white,
-    'light_gray': colors.Color(0.95, 0.95, 0.95),
-    'text_dark': colors.Color(0.2, 0.2, 0.2),
-}
+from analysis import (
+    head_to_head, scoring, wins, playoffs, games,
+    luck, trades, waivers, consistency
+)
+from charts import create_h2h_heatmap, create_yearly_scoring_chart
+from tables import COLORS, create_styled_table, format_dataframe_for_pdf, create_h2h_matrix_table
 
 
 def clean(s):
@@ -145,10 +139,10 @@ class ReportGenerator:
 
                 # Fetch transactions
                 try:
-                    trades = await self.api.get_transactions(league_key, "trade", 100)
-                    adds = await self.api.get_transactions(league_key, "add", 200)
+                    trade_txns = await self.api.get_transactions(league_key, "trade", 100)
+                    add_txns = await self.api.get_transactions(league_key, "add", 200)
 
-                    for txn in trades:
+                    for txn in trade_txns:
                         ts = txn.get("timestamp")
                         txn_date = None
                         if ts:
@@ -190,7 +184,7 @@ class ReportGenerator:
                                     'to_manager': team_to_manager.get(dest, 'Unknown'),
                                 })
 
-                    for txn in adds:
+                    for txn in add_txns:
                         ts = txn.get("timestamp")
                         txn_date = None
                         if ts:
@@ -278,7 +272,7 @@ class ReportGenerator:
         self.seasons = sorted(self.matchups_df['season'].unique()) if not self.matchups_df.empty else []
 
     async def generate_pdf(self, league_name: str, output_path: Path):
-        """Generate the PDF report."""
+        """Generate the comprehensive PDF report."""
         doc = SimpleDocTemplate(
             str(output_path),
             pagesize=landscape(letter),
@@ -333,7 +327,39 @@ class ReportGenerator:
             alignment=TA_CENTER,
         )
 
-        # Title Page
+        # Helper function to create tables
+        def add_table_from_df(df, columns, column_names, number_format=None, max_rows=20, col_widths=None, title=None):
+            if df.empty:
+                return
+
+            data = format_dataframe_for_pdf(df, columns, column_names, number_format, max_rows)
+            table = create_styled_table(data, col_widths)
+
+            if table:
+                keep_elements = []
+                if title:
+                    keep_elements.append(Paragraph(title, subsection_style))
+                keep_elements.append(table)
+                keep_elements.append(Spacer(1, 0.15 * inch))
+                elements.append(KeepTogether(keep_elements))
+
+        def add_section(title):
+            elements.append(Paragraph(title, section_style))
+            elements.append(HRFlowable(width="100%", thickness=2, color=COLORS['accent']))
+
+        def add_chart(chart_buffer, width=8.0, height=5.0, title=None):
+            if chart_buffer is None:
+                return
+            chart_buffer.seek(0)
+            img = Image(chart_buffer, width=width * inch, height=height * inch)
+            keep_elements = []
+            if title:
+                keep_elements.append(Paragraph(title, subsection_style))
+            keep_elements.append(img)
+            keep_elements.append(Spacer(1, 0.15 * inch))
+            elements.append(KeepTogether(keep_elements))
+
+        # ===== Title Page =====
         elements.append(Spacer(1, 1 * inch))
         elements.append(Paragraph(league_name, title_style))
         elements.append(Spacer(1, 0.1 * inch))
@@ -346,6 +372,10 @@ class ReportGenerator:
                 styles['Normal']
             ))
 
+        team_count = len(self.matchups_df["team1_name"].unique()) if not self.matchups_df.empty else 0
+        if team_count:
+            elements.append(Paragraph(f"{team_count} Managers", styles['Normal']))
+
         elements.append(Spacer(1, 0.5 * inch))
         elements.append(Paragraph(
             f"Generated: {datetime.now().strftime('%B %d, %Y')}",
@@ -353,215 +383,284 @@ class ReportGenerator:
         ))
         elements.append(PageBreak())
 
-        # Helper function to create tables
-        def create_table(data, col_widths=None):
-            if not data:
-                return None
+        # ===== Section 1: Head-to-Head Records =====
+        add_section("1. Head-to-Head Records")
 
-            table = Table(data, colWidths=col_widths)
-            table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), COLORS['primary']),
-                ('TEXTCOLOR', (0, 0), (-1, 0), COLORS['white']),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, 0), 9),
-                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                ('FONTSIZE', (0, 1), (-1, -1), 8),
-                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [COLORS['white'], COLORS['light_gray']]),
-                ('GRID', (0, 0), (-1, -1), 0.5, colors.Color(0.8, 0.8, 0.8)),
-                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                ('TOPPADDING', (0, 0), (-1, -1), 4),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-            ]))
-            return table
+        h2h_matrix = head_to_head.build_h2h_matrix(self.matchups_df)
+        h2h_numeric = head_to_head.get_h2h_numeric_matrix(self.matchups_df)
 
-        # Section 1: Scoring Leaders
-        elements.append(Paragraph("1. Scoring Leaders", section_style))
-        elements.append(HRFlowable(width="100%", thickness=2, color=COLORS['accent']))
+        if not h2h_numeric.empty:
+            chart_buf = create_h2h_heatmap(h2h_numeric)
+            add_chart(chart_buf, width=7.0, height=5.0, title="Win Percentage Heatmap")
 
-        if not self.matchups_df.empty:
-            # All-time scoring leaders
-            team_scores = self._get_team_scores()
-            team_scores = team_scores[~team_scores['is_playoff']]
-
-            alltime = team_scores.groupby('team_name').agg({
-                'points_for': 'sum',
-                'week': 'count',
-                'season': 'nunique',
-            }).reset_index()
-            alltime.columns = ['Manager', 'Total Points', 'Games', 'Seasons']
-            alltime['PPG'] = alltime['Total Points'] / alltime['Games']
-            alltime = alltime.sort_values('Total Points', ascending=False).head(15)
-
-            data = [['Manager', 'Total Pts', 'Games', 'PPG', 'Seasons']]
-            for _, row in alltime.iterrows():
-                data.append([
-                    row['Manager'],
-                    f"{row['Total Points']:.1f}",
-                    str(row['Games']),
-                    f"{row['PPG']:.2f}",
-                    str(row['Seasons']),
-                ])
-
-            elements.append(Paragraph("All-Time Scoring Leaders", subsection_style))
-            table = create_table(data, [1.8*inch, 0.9*inch, 0.7*inch, 0.7*inch, 0.7*inch])
+        if not h2h_matrix.empty:
+            table = create_h2h_matrix_table(h2h_matrix)
             if table:
+                elements.append(Paragraph("Detailed Win-Loss Records", subsection_style))
                 elements.append(table)
-            elements.append(Spacer(1, 0.2 * inch))
+                elements.append(Spacer(1, 0.15 * inch))
 
-        # Section 2: Win/Loss Records
-        elements.append(Paragraph("2. Win/Loss Records", section_style))
-        elements.append(HRFlowable(width="100%", thickness=2, color=COLORS['accent']))
+        # ===== Section 2: Scoring Leaders =====
+        add_section("2. Scoring Leaders")
 
-        if not self.matchups_df.empty:
-            team_scores = self._get_team_scores()
-            team_scores = team_scores[~team_scores['is_playoff']]
+        alltime_leaders = scoring.get_alltime_scoring_leaders(self.matchups_df)
+        add_table_from_df(
+            alltime_leaders,
+            columns=["team_name", "total_points", "games", "ppg", "seasons"],
+            column_names={"team_name": "Manager", "total_points": "Total Pts",
+                          "games": "Games", "ppg": "PPG", "seasons": "Seasons"},
+            number_format={"total_points": "{:.1f}", "ppg": "{:.2f}"},
+            col_widths=[1.8*inch, 1.0*inch, 0.7*inch, 0.7*inch, 0.7*inch],
+            title="All-Time Point Leaders",
+        )
 
-            win_records = team_scores.groupby('team_name').agg({
-                'won': 'sum',
-                'week': 'count',
-                'season': 'nunique',
-            }).reset_index()
-            win_records.columns = ['Manager', 'Wins', 'Games', 'Seasons']
-            win_records['Losses'] = win_records['Games'] - win_records['Wins']
-            win_records['Win %'] = win_records['Wins'] / win_records['Games']
-            win_records = win_records.sort_values('Wins', ascending=False).head(15)
+        weekly_highs = scoring.get_weekly_high_scores(self.matchups_df, top_n=15)
+        add_table_from_df(
+            weekly_highs,
+            columns=["season", "week", "team_name", "points_for", "opponent_name"],
+            column_names={"season": "Year", "week": "Wk", "team_name": "Manager",
+                          "points_for": "Points", "opponent_name": "Opponent"},
+            number_format={"points_for": "{:.2f}"},
+            col_widths=[0.6*inch, 0.4*inch, 1.6*inch, 0.8*inch, 1.6*inch],
+            title="Highest Single-Week Scores",
+        )
 
-            data = [['Manager', 'W', 'L', 'Win %', 'Seasons']]
-            for _, row in win_records.iterrows():
-                data.append([
-                    row['Manager'],
-                    str(int(row['Wins'])),
-                    str(int(row['Losses'])),
-                    f"{row['Win %']:.1%}",
-                    str(row['Seasons']),
-                ])
+        # ===== Section 3: Win/Loss Records =====
+        add_section("3. Win/Loss Records")
 
-            elements.append(Paragraph("All-Time Win Leaders", subsection_style))
-            table = create_table(data, [1.8*inch, 0.6*inch, 0.6*inch, 0.7*inch, 0.7*inch])
-            if table:
-                elements.append(table)
-            elements.append(Spacer(1, 0.2 * inch))
+        win_leaders = wins.get_alltime_win_leaders(self.matchups_df)
+        add_table_from_df(
+            win_leaders,
+            columns=["team_name", "wins", "losses", "win_pct", "seasons"],
+            column_names={"team_name": "Manager", "wins": "W", "losses": "L",
+                          "win_pct": "Win %", "seasons": "Seasons"},
+            number_format={"win_pct": "{:.1%}"},
+            col_widths=[1.8*inch, 0.6*inch, 0.6*inch, 0.7*inch, 0.7*inch],
+            title="All-Time Win Leaders",
+        )
 
-        # Section 3: Championships
-        elements.append(Paragraph("3. Championships & Playoffs", section_style))
-        elements.append(HRFlowable(width="100%", thickness=2, color=COLORS['accent']))
+        best_teams = wins.get_best_teams_by_season(self.matchups_df)
+        add_table_from_df(
+            best_teams,
+            columns=["season", "team_name", "wins", "losses", "win_pct"],
+            column_names={"season": "Year", "team_name": "Manager", "wins": "W",
+                          "losses": "L", "win_pct": "Win %"},
+            number_format={"win_pct": "{:.1%}"},
+            col_widths=[0.6*inch, 1.8*inch, 0.5*inch, 0.5*inch, 0.7*inch],
+            title="Best Teams by Season",
+        )
+
+        worst_teams = wins.get_worst_teams_by_season(self.matchups_df)
+        add_table_from_df(
+            worst_teams,
+            columns=["season", "team_name", "wins", "losses", "total_pts", "avg_ppg", "ppg_vs_median"],
+            column_names={"season": "Year", "team_name": "Manager", "wins": "W",
+                          "losses": "L", "total_pts": "Pts", "avg_ppg": "PPG", "ppg_vs_median": "vs Med"},
+            number_format={"total_pts": "{:.0f}", "avg_ppg": "{:.1f}", "ppg_vs_median": "{:+.1f}"},
+            col_widths=[0.5*inch, 1.4*inch, 0.4*inch, 0.4*inch, 0.6*inch, 0.55*inch, 0.55*inch],
+            title="Worst Teams by Season",
+        )
+
+        # ===== Section 4: Streaks =====
+        add_section("4. Win and Loss Streaks")
+
+        win_streaks = wins.get_longest_win_streaks(self.matchups_df)
+        add_table_from_df(
+            win_streaks,
+            columns=["team_name", "max_win_streak", "win_streak_end_season", "win_streak_end_week"],
+            column_names={"team_name": "Manager", "max_win_streak": "Streak",
+                          "win_streak_end_season": "End Year", "win_streak_end_week": "End Wk"},
+            col_widths=[1.8*inch, 0.6*inch, 0.8*inch, 0.7*inch],
+            title="Longest Win Streaks",
+        )
+
+        loss_streaks = wins.get_longest_loss_streaks(self.matchups_df)
+        add_table_from_df(
+            loss_streaks,
+            columns=["team_name", "max_loss_streak", "loss_streak_end_season", "loss_streak_end_week"],
+            column_names={"team_name": "Manager", "max_loss_streak": "Streak",
+                          "loss_streak_end_season": "End Year", "loss_streak_end_week": "End Wk"},
+            col_widths=[1.8*inch, 0.6*inch, 0.8*inch, 0.7*inch],
+            title="Longest Losing Streaks",
+        )
+
+        # ===== Section 5: Championships & Playoffs =====
+        add_section("5. Championships & Playoffs")
 
         if not self.standings_df.empty:
-            # Podium by year
-            podium_data = [['Season', '1st Place', '2nd Place', '3rd Place']]
-            for season in sorted(self.standings_df['season'].unique(), reverse=True):
-                season_df = self.standings_df[self.standings_df['season'] == season]
-                first = season_df[season_df['rank'] == 1]['team_name'].values
-                second = season_df[season_df['rank'] == 2]['team_name'].values
-                third = season_df[season_df['rank'] == 3]['team_name'].values
+            podium_by_year = playoffs.get_podium_by_year(self.standings_df)
+            add_table_from_df(
+                podium_by_year,
+                columns=["season", "1st", "2nd", "3rd"],
+                column_names={"season": "Year", "1st": "1st Place", "2nd": "2nd Place", "3rd": "3rd Place"},
+                col_widths=[0.6*inch, 1.6*inch, 1.6*inch, 1.6*inch],
+                title="Playoff Podium by Year",
+            )
 
-                podium_data.append([
-                    str(season),
-                    first[0] if len(first) > 0 else "",
-                    second[0] if len(second) > 0 else "",
-                    third[0] if len(third) > 0 else "",
-                ])
+            placement_counts = playoffs.get_placement_counts(self.standings_df)
+            add_table_from_df(
+                placement_counts,
+                columns=["team_name", "1st", "2nd", "3rd", "total_podium", "seasons"],
+                column_names={"team_name": "Manager", "1st": "1st", "2nd": "2nd",
+                              "3rd": "3rd", "total_podium": "Total", "seasons": "Seasons"},
+                col_widths=[1.8*inch, 0.5*inch, 0.5*inch, 0.5*inch, 0.6*inch, 0.7*inch],
+                title="Total Podium Finishes by Manager",
+            )
 
-            elements.append(Paragraph("Playoff Podium by Year", subsection_style))
-            table = create_table(podium_data, [0.6*inch, 1.6*inch, 1.6*inch, 1.6*inch])
-            if table:
-                elements.append(table)
-            elements.append(Spacer(1, 0.2 * inch))
+            playoff_apps = playoffs.get_playoff_appearances(self.standings_df)
+            add_table_from_df(
+                playoff_apps,
+                columns=["team_name", "playoff_appearances", "seasons_played", "appearance_pct"],
+                column_names={"team_name": "Manager", "playoff_appearances": "Apps",
+                              "seasons_played": "Seasons", "appearance_pct": "Rate"},
+                number_format={"appearance_pct": "{:.1%}"},
+                col_widths=[1.8*inch, 0.7*inch, 0.7*inch, 0.7*inch],
+                title="Playoff Appearances",
+            )
 
-            # Championship counts
-            champs = self.standings_df.copy()
-            champs['first'] = (champs['rank'] == 1).astype(int)
-            champs['second'] = (champs['rank'] == 2).astype(int)
-            champs['third'] = (champs['rank'] == 3).astype(int)
+        # ===== Section 6: Game Extremes =====
+        add_section("6. Game Extremes")
 
-            placements = champs.groupby('team_name').agg({
-                'first': 'sum',
-                'second': 'sum',
-                'third': 'sum',
-                'season': 'count',
-            }).reset_index()
-            placements.columns = ['Manager', '1st', '2nd', '3rd', 'Seasons']
-            placements['Total'] = placements['1st'] + placements['2nd'] + placements['3rd']
-            placements = placements.sort_values(['1st', '2nd', '3rd'], ascending=False).head(15)
+        blowouts = games.get_biggest_blowouts(self.matchups_df, top_n=15)
+        add_table_from_df(
+            blowouts,
+            columns=["season", "week", "winner", "loser", "winner_score", "loser_score", "margin"],
+            column_names={"season": "Year", "week": "Wk", "winner": "Winner",
+                          "loser": "Loser", "winner_score": "W Pts", "loser_score": "L Pts",
+                          "margin": "Margin"},
+            number_format={"winner_score": "{:.1f}", "loser_score": "{:.1f}", "margin": "{:.1f}"},
+            col_widths=[0.5*inch, 0.4*inch, 1.5*inch, 1.5*inch, 0.6*inch, 0.6*inch, 0.6*inch],
+            title="Biggest Blowouts",
+        )
 
-            data = [['Manager', '1st', '2nd', '3rd', 'Total', 'Seasons']]
-            for _, row in placements.iterrows():
-                data.append([
-                    row['Manager'],
-                    str(int(row['1st'])),
-                    str(int(row['2nd'])),
-                    str(int(row['3rd'])),
-                    str(int(row['Total'])),
-                    str(row['Seasons']),
-                ])
+        closest = games.get_closest_games(self.matchups_df, top_n=15)
+        add_table_from_df(
+            closest,
+            columns=["season", "week", "winner", "loser", "winner_score", "loser_score", "margin"],
+            column_names={"season": "Year", "week": "Wk", "winner": "Winner",
+                          "loser": "Loser", "winner_score": "W Pts", "loser_score": "L Pts",
+                          "margin": "Margin"},
+            number_format={"winner_score": "{:.1f}", "loser_score": "{:.1f}", "margin": "{:.2f}"},
+            col_widths=[0.5*inch, 0.4*inch, 1.5*inch, 1.5*inch, 0.6*inch, 0.6*inch, 0.6*inch],
+            title="Closest Games",
+        )
 
-            elements.append(Paragraph("Podium Finishes by Manager", subsection_style))
-            table = create_table(data, [1.8*inch, 0.5*inch, 0.5*inch, 0.5*inch, 0.6*inch, 0.7*inch])
-            if table:
-                elements.append(table)
+        # ===== Section 7: Luck Analysis =====
+        add_section("7. Luck Analysis")
 
-        # Section 4: Transactions
+        unlucky = luck.get_unlucky_losses(self.matchups_df, top_n=15)
+        add_table_from_df(
+            unlucky,
+            columns=["season", "week", "team_name", "points_for", "opponent_name", "points_against"],
+            column_names={"season": "Year", "week": "Wk", "team_name": "Manager",
+                          "points_for": "Scored", "opponent_name": "Opponent", "points_against": "Opp"},
+            number_format={"points_for": "{:.1f}", "points_against": "{:.1f}"},
+            col_widths=[0.5*inch, 0.4*inch, 1.5*inch, 0.7*inch, 1.5*inch, 0.7*inch],
+            title="Unluckiest Losses (High-Scoring Losses)",
+        )
+
+        lucky_wins = luck.get_lucky_wins(self.matchups_df, top_n=15)
+        add_table_from_df(
+            lucky_wins,
+            columns=["season", "week", "team_name", "points_for", "opponent_name", "points_against"],
+            column_names={"season": "Year", "week": "Wk", "team_name": "Manager",
+                          "points_for": "Scored", "opponent_name": "Opponent", "points_against": "Opp"},
+            number_format={"points_for": "{:.1f}", "points_against": "{:.1f}"},
+            col_widths=[0.5*inch, 0.4*inch, 1.5*inch, 0.7*inch, 1.5*inch, 0.7*inch],
+            title="Luckiest Wins (Low-Scoring Victories)",
+        )
+
+        all_play = luck.calculate_all_play_records(self.matchups_df)
+        add_table_from_df(
+            all_play,
+            columns=["season", "team_name", "all_play_wins", "all_play_losses", "all_play_win_pct"],
+            column_names={"season": "Year", "team_name": "Manager", "all_play_wins": "W",
+                          "all_play_losses": "L", "all_play_win_pct": "Win %"},
+            number_format={"all_play_win_pct": "{:.1%}"},
+            col_widths=[0.6*inch, 1.8*inch, 0.5*inch, 0.5*inch, 0.7*inch],
+            title="All-Play Records by Season",
+        )
+
+        alltime_all_play = luck.get_alltime_all_play_records(self.matchups_df)
+        if not alltime_all_play.empty:
+            alltime_all_play = alltime_all_play.copy()
+            top_manager = alltime_all_play.iloc[0]["team_name"]
+            alltime_all_play.loc[alltime_all_play["team_name"] == top_manager, "team_name"] = f"*** {top_manager} *** CHAMPION"
+
+        add_table_from_df(
+            alltime_all_play,
+            columns=["team_name", "all_play_wins", "all_play_losses", "all_play_win_pct", "seasons"],
+            column_names={"team_name": "Manager", "all_play_wins": "W",
+                          "all_play_losses": "L", "all_play_win_pct": "Win %", "seasons": "Seasons"},
+            number_format={"all_play_win_pct": "{:.1%}"},
+            col_widths=[2.4*inch, 0.5*inch, 0.5*inch, 0.7*inch, 0.7*inch],
+            title="All-Time All-Play Records (True Strength Champion)",
+        )
+
+        # ===== Section 8: Points Against =====
+        add_section("8. Points Against (Schedule Luck)")
+
+        pa_leaders = luck.get_points_against_leaders_by_year(self.matchups_df)
+        add_table_from_df(
+            pa_leaders,
+            columns=["season", "team_name", "total_pa", "avg_pa", "wins", "pa_vs_avg"],
+            column_names={"season": "Year", "team_name": "Manager", "total_pa": "Total PA",
+                          "avg_pa": "Avg PA", "wins": "W", "pa_vs_avg": "vs Avg"},
+            number_format={"total_pa": "{:.0f}", "avg_pa": "{:.1f}", "pa_vs_avg": "{:+.0f}"},
+            col_widths=[0.5*inch, 1.4*inch, 0.7*inch, 0.6*inch, 0.4*inch, 0.6*inch],
+            title="Most Points Against by Year (Unluckiest Schedule)",
+        )
+
+        # ===== Section 9: Transactions =====
+        add_section("9. Transactions & Manager Activity")
+
+        # Yearly scoring chart
+        yearly_scoring = scoring.get_yearly_scoring_totals(self.matchups_df)
+        if not yearly_scoring.empty:
+            yearly_chart = create_yearly_scoring_chart(
+                yearly_scoring,
+                title="Total Points by Manager Over Time"
+            )
+            add_chart(yearly_chart, width=9.5, height=5.5, title="Yearly Scoring Totals")
+
+        # Total moves by manager
         if not self.trades_df.empty or not self.adds_df.empty:
-            elements.append(PageBreak())
-            elements.append(Paragraph("4. Transactions & Activity", section_style))
-            elements.append(HRFlowable(width="100%", thickness=2, color=COLORS['accent']))
+            total_moves = trades.get_total_moves_by_manager(self.trades_df, self.adds_df)
+            if not total_moves.empty:
+                add_table_from_df(
+                    total_moves,
+                    columns=["manager", "trades", "adds", "total_moves"],
+                    column_names={"manager": "Manager", "trades": "Trades", "adds": "Adds", "total_moves": "Total Moves"},
+                    col_widths=[1.8*inch, 0.7*inch, 0.7*inch, 0.9*inch],
+                    title="Total Moves by Manager (Trades + Waiver Adds)",
+                )
 
-            # Total moves by manager
-            trade_counts = pd.DataFrame()
-            add_counts = pd.DataFrame()
+        # ===== Section 10: Scoring Consistency =====
+        add_section("10. Scoring Consistency")
 
-            if not self.trades_df.empty and 'from_manager' in self.trades_df.columns:
-                trade_counts = self.trades_df.groupby('from_manager')['trade_id'].nunique().reset_index()
-                trade_counts.columns = ['Manager', 'Trades']
+        consistent = consistency.get_most_consistent_teams(self.matchups_df, top_n=15)
+        add_table_from_df(
+            consistent,
+            columns=["season", "team_name", "avg_score", "std_dev", "cv", "min_score", "max_score"],
+            column_names={"season": "Year", "team_name": "Manager", "avg_score": "Avg",
+                          "std_dev": "StdDev", "cv": "CV", "min_score": "Min", "max_score": "Max"},
+            number_format={"avg_score": "{:.1f}", "std_dev": "{:.1f}", "cv": "{:.2f}",
+                           "min_score": "{:.1f}", "max_score": "{:.1f}"},
+            col_widths=[0.5*inch, 1.6*inch, 0.6*inch, 0.6*inch, 0.5*inch, 0.6*inch, 0.6*inch],
+            title="Most Consistent Teams (Lowest Variance)",
+        )
 
-            if not self.adds_df.empty and 'manager' in self.adds_df.columns:
-                add_counts = self.adds_df.groupby('manager').size().reset_index(name='Adds')
-                add_counts.columns = ['Manager', 'Adds']
-
-            if not trade_counts.empty or not add_counts.empty:
-                if trade_counts.empty:
-                    moves = add_counts.copy()
-                    moves['Trades'] = 0
-                elif add_counts.empty:
-                    moves = trade_counts.copy()
-                    moves['Adds'] = 0
-                else:
-                    moves = trade_counts.merge(add_counts, on='Manager', how='outer').fillna(0)
-
-                moves['Trades'] = moves['Trades'].astype(int)
-                moves['Adds'] = moves['Adds'].astype(int)
-                moves['Total'] = moves['Trades'] + moves['Adds']
-                moves = moves.sort_values('Total', ascending=False).head(15)
-
-                data = [['Manager', 'Trades', 'Adds', 'Total Moves']]
-                for _, row in moves.iterrows():
-                    data.append([
-                        row['Manager'],
-                        str(row['Trades']),
-                        str(row['Adds']),
-                        str(row['Total']),
-                    ])
-
-                elements.append(Paragraph("Total Moves by Manager", subsection_style))
-                table = create_table(data, [1.8*inch, 0.7*inch, 0.7*inch, 0.9*inch])
-                if table:
-                    elements.append(table)
+        volatile = consistency.get_most_volatile_teams(self.matchups_df, top_n=15)
+        add_table_from_df(
+            volatile,
+            columns=["season", "team_name", "avg_score", "std_dev", "cv", "min_score", "max_score"],
+            column_names={"season": "Year", "team_name": "Manager", "avg_score": "Avg",
+                          "std_dev": "StdDev", "cv": "CV", "min_score": "Min", "max_score": "Max"},
+            number_format={"avg_score": "{:.1f}", "std_dev": "{:.1f}", "cv": "{:.2f}",
+                           "min_score": "{:.1f}", "max_score": "{:.1f}"},
+            col_widths=[0.5*inch, 1.6*inch, 0.6*inch, 0.6*inch, 0.5*inch, 0.6*inch, 0.6*inch],
+            title="Most Volatile Teams (Boom or Bust)",
+        )
 
         # Build PDF
         doc.build(elements)
-
-    def _get_team_scores(self) -> pd.DataFrame:
-        """Get team scores by week from matchups."""
-        if self.matchups_df.empty:
-            return pd.DataFrame()
-
-        team1 = self.matchups_df[['season', 'week', 'team1_name', 'score1', 'score2', 'is_playoff']].copy()
-        team1.columns = ['season', 'week', 'team_name', 'points_for', 'points_against', 'is_playoff']
-        team1['won'] = team1['points_for'] > team1['points_against']
-
-        team2 = self.matchups_df[['season', 'week', 'team2_name', 'score2', 'score1', 'is_playoff']].copy()
-        team2.columns = ['season', 'week', 'team_name', 'points_for', 'points_against', 'is_playoff']
-        team2['won'] = team2['points_for'] > team2['points_against']
-
-        return pd.concat([team1, team2], ignore_index=True)

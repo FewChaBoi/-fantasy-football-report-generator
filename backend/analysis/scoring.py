@@ -1,7 +1,7 @@
 """Scoring analysis - weekly highs, season totals, all-time leaders."""
 
 import pandas as pd
-from ..data.matchups import get_team_scores_by_week
+from .helpers import get_team_scores_by_week
 
 
 def get_weekly_high_scores(

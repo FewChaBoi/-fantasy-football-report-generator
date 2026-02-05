@@ -1,7 +1,7 @@
 """Playoff and championship analysis."""
 
 import pandas as pd
-from ..data.matchups import get_team_scores_by_week
+from .helpers import get_team_scores_by_week
 
 
 def get_playoff_appearances(standings_df: pd.DataFrame) -> pd.DataFrame:

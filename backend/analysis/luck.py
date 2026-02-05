@@ -2,7 +2,7 @@
 
 import pandas as pd
 import numpy as np
-from ..data.matchups import get_team_scores_by_week
+from .helpers import get_team_scores_by_week
 
 
 def get_weekly_median_scores(matchups_df: pd.DataFrame) -> pd.DataFrame:

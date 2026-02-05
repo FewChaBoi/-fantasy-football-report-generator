@@ -1,7 +1,7 @@
 """Win/loss record and streak analysis."""
 
 import pandas as pd
-from ..data.matchups import get_team_scores_by_week
+from .helpers import get_team_scores_by_week
 
 
 def get_season_win_leaders(matchups_df: pd.DataFrame) -> pd.DataFrame:

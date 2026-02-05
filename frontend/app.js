@@ -131,12 +131,24 @@ async function loadUserLeagues() {
         if (data.leagues && data.leagues.length > 0) {
             leagueSelect.innerHTML = '<option value="">Select a league...</option>';
 
+            // Group leagues by name, keeping the most recent year's key
+            const leaguesByName = {};
             data.leagues.forEach(league => {
-                const option = document.createElement('option');
-                option.value = league.league_key;
-                option.textContent = `${league.name} (${league.year})`;
-                leagueSelect.appendChild(option);
+                const name = league.name;
+                if (!leaguesByName[name] || league.year > leaguesByName[name].year) {
+                    leaguesByName[name] = league;
+                }
             });
+
+            // Sort by name and add to dropdown
+            Object.values(leaguesByName)
+                .sort((a, b) => a.name.localeCompare(b.name))
+                .forEach(league => {
+                    const option = document.createElement('option');
+                    option.value = league.league_key;
+                    option.textContent = league.name;
+                    leagueSelect.appendChild(option);
+                });
         } else {
             leagueSelect.innerHTML = '<option value="">No leagues found - enter key manually</option>';
         }

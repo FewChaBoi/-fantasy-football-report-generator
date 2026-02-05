@@ -147,23 +147,45 @@ class YahooFantasyAPI:
         print(f"[STANDINGS] Fetching standings for {league_key}", flush=True)
 
         if len(league_data) > 1:
-            standings_data = league_data[1].get("standings", [[]])[0].get("teams", {})
+            # Navigate to teams - handle different possible structures
+            standings_container = league_data[1].get("standings", {})
 
-            # Debug: print first team's raw structure
+            # Debug: print the standings container structure
+            print(f"[STANDINGS DEBUG] standings_container type: {type(standings_container)}", flush=True)
+            if isinstance(standings_container, dict):
+                print(f"[STANDINGS DEBUG] standings_container keys: {list(standings_container.keys())[:5]}", flush=True)
+            elif isinstance(standings_container, list) and standings_container:
+                print(f"[STANDINGS DEBUG] standings_container[0] type: {type(standings_container[0])}", flush=True)
+
+            # Try to get teams from different possible structures
+            teams_data = {}
+            if isinstance(standings_container, list) and standings_container:
+                teams_data = standings_container[0].get("teams", {})
+            elif isinstance(standings_container, dict):
+                # Maybe it's standings.0.teams or just standings.teams
+                if "0" in standings_container:
+                    teams_data = standings_container["0"].get("teams", {})
+                elif "teams" in standings_container:
+                    teams_data = standings_container["teams"]
+
+            print(f"[STANDINGS DEBUG] teams_data keys: {list(teams_data.keys())[:5] if isinstance(teams_data, dict) else 'not a dict'}", flush=True)
+
             first_printed = False
 
-            for key, val in standings_data.items():
+            for key, val in teams_data.items():
                 if key != "count" and isinstance(val, dict):
                     team = val.get("team", [])
                     team_info = {}
 
                     # Debug: print raw team structure for first team
                     if not first_printed:
-                        print(f"[STANDINGS DEBUG] Raw team structure: {team}", flush=True)
+                        print(f"[STANDINGS DEBUG] Raw team structure (first 2 elements): {team[:2] if isinstance(team, list) else team}", flush=True)
+                        if isinstance(team, list) and len(team) > 1:
+                            print(f"[STANDINGS DEBUG] team[1] content: {team[1]}", flush=True)
                         first_printed = True
 
-                    # Parse team info
-                    if team and len(team) > 0:
+                    # Parse team info from team[0]
+                    if team and len(team) > 0 and isinstance(team[0], list):
                         for item in team[0]:
                             if isinstance(item, dict):
                                 if "team_key" in item:
@@ -175,31 +197,45 @@ class YahooFantasyAPI:
                                     if managers:
                                         mgr = managers[0].get("manager", {})
                                         team_info["manager"] = mgr.get("nickname", "Unknown")
+                                # Check if team_standings is directly in the team info items
+                                elif "team_standings" in item:
+                                    standings_info = item["team_standings"]
+                                    self._parse_standings_info(team_info, standings_info)
 
-                    # Parse standings info - check multiple possible locations
-                    if len(team) > 1:
-                        # Try team_standings first
+                    # Parse standings info from team[1] if not found above
+                    if "rank" not in team_info and len(team) > 1 and isinstance(team[1], dict):
                         standings_info = team[1].get("team_standings", {})
 
-                        # If empty, look for other keys
+                        # If team_standings not found, check if the data is directly in team[1]
                         if not standings_info:
-                            print(f"[STANDINGS DEBUG] team[1] keys: {team[1].keys() if isinstance(team[1], dict) else 'not a dict'}", flush=True)
+                            # Maybe rank/wins are directly in team[1]
+                            if "rank" in team[1]:
+                                standings_info = team[1]
+                            elif "outcome_totals" in team[1]:
+                                standings_info = team[1]
 
-                        rank_val = standings_info.get("rank", 0)
-                        team_info["rank"] = int(rank_val) if rank_val else 0
-                        team_info["points_for"] = float(standings_info.get("points_for", 0))
-                        team_info["points_against"] = float(standings_info.get("points_against", 0))
-
-                        outcomes = standings_info.get("outcome_totals", {})
-                        team_info["wins"] = int(outcomes.get("wins", 0))
-                        team_info["losses"] = int(outcomes.get("losses", 0))
-                        team_info["ties"] = int(outcomes.get("ties", 0))
+                        self._parse_standings_info(team_info, standings_info)
 
                     print(f"[STANDINGS] Team: {team_info.get('name', 'Unknown')}, Rank: {team_info.get('rank', 0)}, W: {team_info.get('wins', 0)}", flush=True)
 
                     standings.append(team_info)
 
         return standings
+
+    def _parse_standings_info(self, team_info: dict, standings_info: dict) -> None:
+        """Parse standings info into team_info dict."""
+        if not standings_info:
+            return
+
+        rank_val = standings_info.get("rank", 0)
+        team_info["rank"] = int(rank_val) if rank_val else 0
+        team_info["points_for"] = float(standings_info.get("points_for", 0))
+        team_info["points_against"] = float(standings_info.get("points_against", 0))
+
+        outcomes = standings_info.get("outcome_totals", {})
+        team_info["wins"] = int(outcomes.get("wins", 0))
+        team_info["losses"] = int(outcomes.get("losses", 0))
+        team_info["ties"] = int(outcomes.get("ties", 0))
 
     async def get_matchups(self, league_key: str, week: int) -> List[dict]:
         """Get matchups for a specific week."""

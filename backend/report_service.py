@@ -28,6 +28,65 @@ from analysis import (
     luck, trades, waivers, consistency
 )
 from charts import create_h2h_heatmap, create_yearly_scoring_chart
+
+
+def calculate_standings_from_matchups(matchups: List[dict], teams: dict, season: int) -> List[dict]:
+    """Calculate standings from matchup data when API doesn't return standings info."""
+    team_stats = {}
+
+    # Initialize stats for all teams
+    for tk, tv in teams.items():
+        team_stats[tk] = {
+            'team_key': tk,
+            'name': tv.get('name', 'Unknown'),
+            'manager': tv.get('manager', 'Unknown'),
+            'wins': 0,
+            'losses': 0,
+            'ties': 0,
+            'points_for': 0.0,
+            'points_against': 0.0,
+        }
+
+    # Calculate stats from matchups (regular season only)
+    for m in matchups:
+        if m.get('season') != season:
+            continue
+        if m.get('is_playoff', False):
+            continue
+
+        t1_key = m.get('team1_id', '')
+        t2_key = m.get('team2_id', '')
+        s1 = m.get('score1', 0)
+        s2 = m.get('score2', 0)
+
+        if t1_key in team_stats:
+            team_stats[t1_key]['points_for'] += s1
+            team_stats[t1_key]['points_against'] += s2
+            if s1 > s2:
+                team_stats[t1_key]['wins'] += 1
+            elif s1 < s2:
+                team_stats[t1_key]['losses'] += 1
+            else:
+                team_stats[t1_key]['ties'] += 1
+
+        if t2_key in team_stats:
+            team_stats[t2_key]['points_for'] += s2
+            team_stats[t2_key]['points_against'] += s1
+            if s2 > s1:
+                team_stats[t2_key]['wins'] += 1
+            elif s2 < s1:
+                team_stats[t2_key]['losses'] += 1
+            else:
+                team_stats[t2_key]['ties'] += 1
+
+    # Convert to list and rank by wins (then points_for as tiebreaker)
+    standings_list = list(team_stats.values())
+    standings_list.sort(key=lambda x: (-x['wins'], -x['points_for']))
+
+    for i, t in enumerate(standings_list):
+        t['rank'] = i + 1
+
+    return standings_list
 from tables import COLORS, create_styled_table, format_dataframe_for_pdf, create_h2h_matrix_table
 
 
@@ -116,6 +175,14 @@ class ReportGenerator:
 
                 # Fetch standings
                 standings = await self.api.get_league_standings(league_key)
+
+                # Check if API returned valid standings data (any team has wins > 0)
+                has_valid_standings = any(t.get('wins', 0) > 0 for t in standings)
+
+                if not has_valid_standings and all_matchups:
+                    # Calculate standings from matchup data as fallback
+                    print(f"[STANDINGS] API didn't return wins data for {season}, calculating from matchups", flush=True)
+                    standings = calculate_standings_from_matchups(all_matchups, teams, season)
 
                 for i, t in enumerate(standings):
                     t_key = t.get("team_key", "")

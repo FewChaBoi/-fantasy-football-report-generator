@@ -81,16 +81,14 @@ class YahooFantasyAPI:
 
                 if len(game) > 1:
                     leagues_data = game[1].get("leagues", {})
-                    print(f"[API] Leagues data keys: {leagues_data.keys() if leagues_data else 'None'}", flush=True)
                     for key, val in leagues_data.items():
                         if key != "count" and isinstance(val, dict):
-                            print(f"[API] League entry {key} structure: {val}", flush=True)
-                            league = val.get("league", [[]])[0]
-                            print(f"[API] Parsed league[0]: {league}", flush=True)
-                            for item in league:
-                                if isinstance(item, dict) and "league_key" in item:
-                                    leagues.append(item["league_key"])
-                                    print(f"[API] Found league: {item['league_key']}", flush=True)
+                            league_list = val.get("league", [])
+                            if league_list and len(league_list) > 0:
+                                league_info = league_list[0]
+                                if isinstance(league_info, dict) and "league_key" in league_info:
+                                    leagues.append(league_info["league_key"])
+                                    print(f"[API] Found league: {league_info['league_key']} - {league_info.get('name', 'Unknown')}", flush=True)
 
             print(f"[API] Total leagues for {year}: {len(leagues)}", flush=True)
             return leagues

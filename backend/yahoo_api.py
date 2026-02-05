@@ -60,32 +60,42 @@ class YahooFantasyAPI:
         """Get user's league IDs for a specific year."""
         game_id = NFL_GAME_IDS.get(year)
         if not game_id:
+            print(f"[API] No game ID for year {year}")
             return []
 
         try:
+            print(f"[API] Fetching leagues for game_id={game_id} (year {year})")
             data = await self._get(f"users;use_login=1/games;game_keys={game_id}/leagues")
+            print(f"[API] Raw response keys: {data.keys() if data else 'None'}")
             leagues = []
 
             # Parse the nested structure
             users = data.get("fantasy_content", {}).get("users", {})
             user = users.get("0", {}).get("user", [])
+            print(f"[API] User data length: {len(user) if user else 0}")
 
             if len(user) > 1:
                 games = user[1].get("games", {})
                 game = games.get("0", {}).get("game", [])
+                print(f"[API] Game data length: {len(game) if game else 0}")
 
                 if len(game) > 1:
                     leagues_data = game[1].get("leagues", {})
+                    print(f"[API] Leagues data keys: {leagues_data.keys() if leagues_data else 'None'}")
                     for key, val in leagues_data.items():
                         if key != "count" and isinstance(val, dict):
                             league = val.get("league", [[]])[0]
                             for item in league:
                                 if isinstance(item, dict) and "league_key" in item:
                                     leagues.append(item["league_key"])
+                                    print(f"[API] Found league: {item['league_key']}")
 
+            print(f"[API] Total leagues for {year}: {len(leagues)}")
             return leagues
         except Exception as e:
-            print(f"Error getting leagues for {year}: {e}")
+            print(f"[API] Error getting leagues for {year}: {e}")
+            import traceback
+            traceback.print_exc()
             return []
 
     async def get_league_settings(self, league_key: str) -> dict:

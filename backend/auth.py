@@ -53,6 +53,9 @@ class YahooOAuth:
 
     def get_authorization_url(self, state: str) -> str:
         """Get the Yahoo authorization URL."""
+        # Debug: log the redirect URI being used
+        print(f"[AUTH] Building OAuth URL with redirect_uri: '{self.settings.yahoo_redirect_uri}'")
+
         params = {
             "client_id": self.settings.yahoo_client_id,
             "redirect_uri": self.settings.yahoo_redirect_uri,
@@ -60,7 +63,9 @@ class YahooOAuth:
             "scope": "openid",
             "state": state,
         }
-        return f"{self.AUTHORIZE_URL}?{urlencode(params)}"
+        url = f"{self.AUTHORIZE_URL}?{urlencode(params)}"
+        print(f"[AUTH] Full OAuth URL: {url}")
+        return url
 
     async def exchange_code(self, code: str) -> YahooTokens:
         """Exchange authorization code for tokens."""

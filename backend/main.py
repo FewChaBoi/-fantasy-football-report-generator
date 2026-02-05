@@ -226,12 +226,12 @@ async def get_leagues(request: Request):
 
     # Get leagues for recent years
     all_leagues = []
-    print(f"[LEAGUES] Fetching leagues for years: 2025, 2024, 2023")
+    print(f"[LEAGUES] Fetching leagues for years: 2025, 2024, 2023", flush=True)
     for year in [2025, 2024, 2023]:
         try:
-            print(f"[LEAGUES] Fetching year {year}...")
+            print(f"[LEAGUES] Fetching year {year}...", flush=True)
             league_ids = await api.get_user_leagues(year)
-            print(f"[LEAGUES] Year {year}: found {len(league_ids)} leagues: {league_ids}")
+            print(f"[LEAGUES] Year {year}: found {len(league_ids)} leagues: {league_ids}", flush=True)
             for lid in league_ids:
                 try:
                     settings = await api.get_league_settings(lid)
@@ -240,15 +240,15 @@ async def get_leagues(request: Request):
                         "name": settings.get("name", "Unknown"),
                         "year": year,
                     })
-                    print(f"[LEAGUES] Added league: {settings.get('name', 'Unknown')} ({lid})")
+                    print(f"[LEAGUES] Added league: {settings.get('name', 'Unknown')} ({lid})", flush=True)
                 except Exception as e:
-                    print(f"[LEAGUES] Error getting settings for {lid}: {e}")
+                    print(f"[LEAGUES] Error getting settings for {lid}: {e}", flush=True)
                     continue
         except Exception as e:
-            print(f"[LEAGUES] Error fetching year {year}: {e}")
+            print(f"[LEAGUES] Error fetching year {year}: {e}", flush=True)
             continue
 
-    print(f"[LEAGUES] Total leagues found: {len(all_leagues)}")
+    print(f"[LEAGUES] Total leagues found: {len(all_leagues)}", flush=True)
     return {"leagues": all_leagues}
 
 

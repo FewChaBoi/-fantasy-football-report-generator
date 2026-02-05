@@ -60,7 +60,6 @@ class YahooOAuth:
             "client_id": self.settings.yahoo_client_id,
             "redirect_uri": self.settings.yahoo_redirect_uri,
             "response_type": "code",
-            "scope": "openid",
             "state": state,
         }
         url = f"{self.AUTHORIZE_URL}?{urlencode(params)}"

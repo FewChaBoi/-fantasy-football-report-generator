@@ -154,10 +154,14 @@ class ReportGenerator:
                         trade_id = f"{season}_{ts}"
                         players = txn.get("players", {})
 
-                        for key, val in players.items():
-                            if key == "count" or not isinstance(val, dict):
-                                continue
+                        # Handle players being either a dict or a list
+                        players_iter = []
+                        if isinstance(players, dict):
+                            players_iter = [(k, v) for k, v in players.items() if k != "count" and isinstance(v, dict)]
+                        elif isinstance(players, list):
+                            players_iter = [(str(i), p) for i, p in enumerate(players) if isinstance(p, dict)]
 
+                        for key, val in players_iter:
                             player = val.get("player", [])
                             if not player:
                                 continue
@@ -195,10 +199,14 @@ class ReportGenerator:
 
                         players = txn.get("players", {})
 
-                        for key, val in players.items():
-                            if key == "count" or not isinstance(val, dict):
-                                continue
+                        # Handle players being either a dict or a list
+                        players_iter = []
+                        if isinstance(players, dict):
+                            players_iter = [(k, v) for k, v in players.items() if k != "count" and isinstance(v, dict)]
+                        elif isinstance(players, list):
+                            players_iter = [(str(i), p) for i, p in enumerate(players) if isinstance(p, dict)]
 
+                        for key, val in players_iter:
                             player = val.get("player", [])
                             if not player:
                                 continue

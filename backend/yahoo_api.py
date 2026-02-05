@@ -144,6 +144,7 @@ class YahooFantasyAPI:
 
         standings = []
         league_data = data.get("fantasy_content", {}).get("league", [])
+        print(f"[STANDINGS] Fetching standings for {league_key}", flush=True)
 
         if len(league_data) > 1:
             standings_data = league_data[1].get("standings", [[]])[0].get("teams", {})
@@ -169,7 +170,8 @@ class YahooFantasyAPI:
                     # Parse standings info
                     if len(team) > 1:
                         standings_info = team[1].get("team_standings", {})
-                        team_info["rank"] = int(standings_info.get("rank", 0))
+                        rank_val = standings_info.get("rank", 0)
+                        team_info["rank"] = int(rank_val) if rank_val else 0
                         team_info["points_for"] = float(standings_info.get("points_for", 0))
                         team_info["points_against"] = float(standings_info.get("points_against", 0))
 
@@ -177,6 +179,12 @@ class YahooFantasyAPI:
                         team_info["wins"] = int(outcomes.get("wins", 0))
                         team_info["losses"] = int(outcomes.get("losses", 0))
                         team_info["ties"] = int(outcomes.get("ties", 0))
+
+                        # Also check for playoff_seed if available
+                        if "playoff_seed" in standings_info:
+                            team_info["playoff_seed"] = int(standings_info.get("playoff_seed", 0))
+
+                        print(f"[STANDINGS] Team: {team_info.get('name', 'Unknown')}, Rank: {team_info.get('rank')}, W: {team_info.get('wins')}", flush=True)
 
                     standings.append(team_info)
 

@@ -56,28 +56,23 @@ class YahooFantasyAPI:
             response.raise_for_status()
             return response.json()
 
-    async def get_user_leagues(self, year: int) -> List[str]:
-        """Get user's league IDs for a specific year."""
+    async def get_user_leagues(self, year: int) -> List[dict]:
+        """Get user's leagues for a specific year. Returns list of {league_key, name}."""
         game_id = NFL_GAME_IDS.get(year)
         if not game_id:
-            print(f"[API] No game ID for year {year}", flush=True)
             return []
 
         try:
-            print(f"[API] Fetching leagues for game_id={game_id} (year {year})", flush=True)
             data = await self._get(f"users;use_login=1/games;game_keys={game_id}/leagues")
-            print(f"[API] Raw response keys: {data.keys() if data else 'None'}", flush=True)
             leagues = []
 
             # Parse the nested structure
             users = data.get("fantasy_content", {}).get("users", {})
             user = users.get("0", {}).get("user", [])
-            print(f"[API] User data length: {len(user) if user else 0}", flush=True)
 
             if len(user) > 1:
                 games = user[1].get("games", {})
                 game = games.get("0", {}).get("game", [])
-                print(f"[API] Game data length: {len(game) if game else 0}", flush=True)
 
                 if len(game) > 1:
                     leagues_data = game[1].get("leagues", {})
@@ -87,15 +82,14 @@ class YahooFantasyAPI:
                             if league_list and len(league_list) > 0:
                                 league_info = league_list[0]
                                 if isinstance(league_info, dict) and "league_key" in league_info:
-                                    leagues.append(league_info["league_key"])
-                                    print(f"[API] Found league: {league_info['league_key']} - {league_info.get('name', 'Unknown')}", flush=True)
+                                    leagues.append({
+                                        "league_key": league_info["league_key"],
+                                        "name": league_info.get("name", "Unknown League"),
+                                    })
 
-            print(f"[API] Total leagues for {year}: {len(leagues)}", flush=True)
             return leagues
         except Exception as e:
             print(f"[API] Error getting leagues for {year}: {e}", flush=True)
-            import traceback
-            traceback.print_exc()
             return []
 
     async def get_league_settings(self, league_key: str) -> dict:
@@ -312,18 +306,12 @@ async def discover_league_history(api: YahooFantasyAPI, initial_league_key: str)
 
     for year in sorted(NFL_GAME_IDS.keys(), reverse=True):
         try:
-            league_ids = await api.get_user_leagues(year)
+            leagues = await api.get_user_leagues(year)
 
-            for lid in league_ids:
-                try:
-                    settings = await api.get_league_settings(lid)
-                    name = settings.get("name", "")
-
-                    if name == league_name:
-                        found_leagues.append((lid, year))
-                        break
-                except Exception:
-                    continue
+            for league in leagues:
+                if league["name"] == league_name:
+                    found_leagues.append((league["league_key"], year))
+                    break
         except Exception:
             continue
 

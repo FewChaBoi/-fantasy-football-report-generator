@@ -148,10 +148,19 @@ class YahooFantasyAPI:
 
         if len(league_data) > 1:
             standings_data = league_data[1].get("standings", [[]])[0].get("teams", {})
+
+            # Debug: print first team's raw structure
+            first_printed = False
+
             for key, val in standings_data.items():
                 if key != "count" and isinstance(val, dict):
                     team = val.get("team", [])
                     team_info = {}
+
+                    # Debug: print raw team structure for first team
+                    if not first_printed:
+                        print(f"[STANDINGS DEBUG] Raw team structure: {team}", flush=True)
+                        first_printed = True
 
                     # Parse team info
                     if team and len(team) > 0:
@@ -167,9 +176,15 @@ class YahooFantasyAPI:
                                         mgr = managers[0].get("manager", {})
                                         team_info["manager"] = mgr.get("nickname", "Unknown")
 
-                    # Parse standings info
+                    # Parse standings info - check multiple possible locations
                     if len(team) > 1:
+                        # Try team_standings first
                         standings_info = team[1].get("team_standings", {})
+
+                        # If empty, look for other keys
+                        if not standings_info:
+                            print(f"[STANDINGS DEBUG] team[1] keys: {team[1].keys() if isinstance(team[1], dict) else 'not a dict'}", flush=True)
+
                         rank_val = standings_info.get("rank", 0)
                         team_info["rank"] = int(rank_val) if rank_val else 0
                         team_info["points_for"] = float(standings_info.get("points_for", 0))
@@ -180,11 +195,7 @@ class YahooFantasyAPI:
                         team_info["losses"] = int(outcomes.get("losses", 0))
                         team_info["ties"] = int(outcomes.get("ties", 0))
 
-                        # Also check for playoff_seed if available
-                        if "playoff_seed" in standings_info:
-                            team_info["playoff_seed"] = int(standings_info.get("playoff_seed", 0))
-
-                        print(f"[STANDINGS] Team: {team_info.get('name', 'Unknown')}, Rank: {team_info.get('rank')}, W: {team_info.get('wins')}", flush=True)
+                    print(f"[STANDINGS] Team: {team_info.get('name', 'Unknown')}, Rank: {team_info.get('rank', 0)}, W: {team_info.get('wins', 0)}", flush=True)
 
                     standings.append(team_info)
 

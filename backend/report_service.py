@@ -419,6 +419,7 @@ class ReportGenerator:
                 elements.append(KeepTogether(keep_elements))
 
         def add_section(title):
+            elements.append(PageBreak())
             elements.append(Paragraph(title, section_style))
             elements.append(HRFlowable(width="100%", thickness=2, color=COLORS['accent']))
 

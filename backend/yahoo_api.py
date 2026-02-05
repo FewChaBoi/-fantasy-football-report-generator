@@ -95,12 +95,16 @@ class YahooFantasyAPI:
     async def get_league_settings(self, league_key: str) -> dict:
         """Get league settings."""
         data = await self._get(f"league/{league_key}/settings")
-        settings = data.get("fantasy_content", {}).get("league", [[]])[0]
+        league_data = data.get("fantasy_content", {}).get("league", [])
 
         result = {}
-        for item in settings:
-            if isinstance(item, dict):
-                result.update(item)
+        # First element is league info
+        if league_data and isinstance(league_data[0], list):
+            for item in league_data[0]:
+                if isinstance(item, dict):
+                    result.update(item)
+        elif league_data and isinstance(league_data[0], dict):
+            result.update(league_data[0])
 
         return result
 
@@ -281,7 +285,7 @@ class YahooFantasyAPI:
 
 async def discover_league_history(api: YahooFantasyAPI, initial_league_key: str) -> tuple:
     """
-    Discover all historical seasons for a league.
+    Discover all historical seasons for a league by tracing the 'renew' chain.
 
     Returns:
         tuple: (list of (league_key, year) tuples, league_name)
@@ -294,28 +298,56 @@ async def discover_league_history(api: YahooFantasyAPI, initial_league_key: str)
     initial_game_id = int(parts[0])
     initial_year = get_year_from_game_id(initial_game_id)
 
-    # Get league name
+    # Get league name and settings
     try:
         settings = await api.get_league_settings(initial_league_key)
         league_name = settings.get("name", "Unknown League")
-    except Exception:
+        print(f"[HISTORY] Starting league: {league_name} ({initial_league_key})", flush=True)
+    except Exception as e:
+        print(f"[HISTORY] Error getting initial settings: {e}", flush=True)
         league_name = "Fantasy Football League"
+        settings = {}
 
-    # Search for historical seasons
-    found_leagues = []
+    found_leagues = [(initial_league_key, initial_year)]
 
-    for year in sorted(NFL_GAME_IDS.keys(), reverse=True):
+    # Trace backwards using 'renew' field
+    # Format: "449_516875" means game 449, league 516875
+    current_key = initial_league_key
+    current_settings = settings
+
+    while True:
+        renew = current_settings.get("renew", "")
+        if not renew or "_" not in renew:
+            print(f"[HISTORY] No more renew chain: '{renew}'", flush=True)
+            break
+
         try:
-            leagues = await api.get_user_leagues(year)
+            game_id_str, league_id = renew.split("_")
+            game_id = int(game_id_str)
+            prev_league_key = f"{game_id}.l.{league_id}"
+            prev_year = get_year_from_game_id(game_id)
 
-            for league in leagues:
-                if league["name"] == league_name:
-                    found_leagues.append((league["league_key"], year))
-                    break
-        except Exception:
-            continue
+            if prev_year is None:
+                print(f"[HISTORY] Unknown game ID: {game_id}", flush=True)
+                break
 
-    if not found_leagues:
-        found_leagues = [(initial_league_key, initial_year)]
+            print(f"[HISTORY] Found previous season: {prev_year} -> {prev_league_key}", flush=True)
+
+            # Verify we can access this league
+            prev_settings = await api.get_league_settings(prev_league_key)
+            prev_name = prev_settings.get("name", "")
+
+            found_leagues.append((prev_league_key, prev_year))
+            current_key = prev_league_key
+            current_settings = prev_settings
+
+        except Exception as e:
+            print(f"[HISTORY] Error tracing renew chain: {e}", flush=True)
+            break
+
+    # Sort by year (oldest first)
+    found_leagues.sort(key=lambda x: x[1])
+
+    print(f"[HISTORY] Found {len(found_leagues)} seasons: {[y for _, y in found_leagues]}", flush=True)
 
     return found_leagues, league_name

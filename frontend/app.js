@@ -18,6 +18,8 @@ const retryBtn = document.getElementById('retry-btn');
 
 const leagueSelect = document.getElementById('league-select');
 const leagueKeyInput = document.getElementById('league-key');
+const startYearSelect = document.getElementById('start-year');
+const endYearSelect = document.getElementById('end-year');
 
 const progressFill = document.getElementById('progress-fill');
 const progressText = document.getElementById('progress-text');
@@ -37,7 +39,26 @@ document.addEventListener('DOMContentLoaded', () => {
     checkAuthStatus();
     setupEventListeners();
     checkUrlParams();
+    populateYearSelects();
 });
+
+// Populate year dropdown options
+function populateYearSelects() {
+    const currentYear = new Date().getFullYear();
+    const startYear = 2006; // Yahoo Fantasy started around this time
+
+    for (let year = currentYear; year >= startYear; year--) {
+        const option1 = document.createElement('option');
+        option1.value = year;
+        option1.textContent = year;
+        startYearSelect.appendChild(option1);
+
+        const option2 = document.createElement('option');
+        option2.value = year;
+        option2.textContent = year;
+        endYearSelect.appendChild(option2);
+    }
+}
 
 // Event Listeners
 function setupEventListeners() {
@@ -174,15 +195,29 @@ async function startGeneration() {
         return;
     }
 
+    // Get year range
+    const startYear = startYearSelect.value ? parseInt(startYearSelect.value) : null;
+    const endYear = endYearSelect.value ? parseInt(endYearSelect.value) : null;
+
+    // Validate year range
+    if (startYear && endYear && startYear > endYear) {
+        alert('Start year must be before or equal to end year');
+        return;
+    }
+
     showProgressSection();
 
     try {
+        const requestBody = { league_key: leagueKey };
+        if (startYear) requestBody.start_year = startYear;
+        if (endYear) requestBody.end_year = endYear;
+
         const response = await fetch('/api/report/generate', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ league_key: leagueKey }),
+            body: JSON.stringify(requestBody),
         });
 
         if (!response.ok) {

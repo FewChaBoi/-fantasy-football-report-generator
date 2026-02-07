@@ -57,6 +57,21 @@
                 </p>
             </div>
 
+            <!-- Year Range Selection -->
+            <div class="form-group">
+                <label>Year Range (Optional)</label>
+                <div class="year-range-container">
+                    <select id="start-year" class="form-control year-select">
+                        <option value="">All Years</option>
+                    </select>
+                    <span class="year-separator">to</span>
+                    <select id="end-year" class="form-control year-select">
+                        <option value="">All Years</option>
+                    </select>
+                </div>
+                <p class="help-text">Leave as "All Years" to include entire league history</p>
+            </div>
+
             <button id="generate-btn" class="btn btn-primary btn-large">
                 <span class="btn-icon">📊</span>
                 Generate Report

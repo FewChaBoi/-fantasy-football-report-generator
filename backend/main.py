@@ -53,6 +53,8 @@ jobs = {}
 class ReportRequest(BaseModel):
     """Request model for report generation."""
     league_key: str
+    start_year: Optional[int] = None
+    end_year: Optional[int] = None
 
 
 class JobStatus(BaseModel):
@@ -279,6 +281,8 @@ async def generate_report(
         job_id,
         report_request.league_key,
         tokens,
+        report_request.start_year,
+        report_request.end_year,
     )
 
     return {"job_id": job_id}
@@ -316,7 +320,13 @@ async def download_report(job_id: str):
     )
 
 
-async def generate_report_task(job_id: str, league_key: str, tokens: YahooTokens):
+async def generate_report_task(
+    job_id: str,
+    league_key: str,
+    tokens: YahooTokens,
+    start_year: Optional[int] = None,
+    end_year: Optional[int] = None,
+):
     """Background task to generate report."""
     try:
         job = jobs[job_id]
@@ -332,8 +342,26 @@ async def generate_report_task(job_id: str, league_key: str, tokens: YahooTokens
 
         league_keys, league_name = await discover_league_history(api, league_key)
 
+        # Filter by year range if specified
+        if start_year or end_year:
+            filtered_keys = []
+            for lk, year in league_keys:
+                if start_year and year < start_year:
+                    continue
+                if end_year and year > end_year:
+                    continue
+                filtered_keys.append((lk, year))
+            league_keys = filtered_keys
+
+            if not league_keys:
+                raise ValueError(f"No seasons found in the specified year range ({start_year or 'any'} - {end_year or 'any'})")
+
         job.progress = 20
-        job.message = f"Found {len(league_keys)} seasons for '{league_name}'"
+        years_found = [y for _, y in league_keys]
+        if start_year or end_year:
+            job.message = f"Processing {len(league_keys)} seasons ({min(years_found)}-{max(years_found)}) for '{league_name}'"
+        else:
+            job.message = f"Found {len(league_keys)} seasons for '{league_name}'"
 
         # Fetch all data
         generator = ReportGenerator(api)

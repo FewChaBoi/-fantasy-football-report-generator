@@ -188,6 +188,22 @@ h1 {
     text-decoration: underline;
 }
 
+/* Year Range */
+.year-range-container {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.year-select {
+    flex: 1;
+}
+
+.year-separator {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
 /* Divider */
 .divider {
     display: flex;

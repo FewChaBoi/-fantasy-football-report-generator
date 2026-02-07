@@ -139,9 +139,9 @@ class YahooFantasyAPI:
         return teams
 
     async def get_league_standings(self, league_key: str) -> List[dict]:
-        """Get league standings with team standings data."""
-        # Use teams/standings endpoint to get full standings info
-        data = await self._get(f"league/{league_key}/teams/standings")
+        """Get league standings."""
+        # Use basic standings endpoint - fallback calculation handles missing data
+        data = await self._get(f"league/{league_key}/standings")
 
         standings = []
         league_data = data.get("fantasy_content", {}).get("league", [])

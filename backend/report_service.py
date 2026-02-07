@@ -135,11 +135,26 @@ class ReportGenerator:
                 team_display = {}
                 team_to_manager = {}
 
+                # Debug: Log first team from this league
+                if teams:
+                    first_key = next(iter(teams))
+                    first_team = teams[first_key]
+                    print(f"[DEBUG] {season} first team: key={first_key}, data={first_team}", flush=True)
+
                 for tk, tv in teams.items():
                     mgr = clean(tv.get("manager", "Unknown"))
                     name = clean(tv.get("name", "Unknown"))
-                    team_display[tk] = f"{mgr} ({name})"
-                    team_to_manager[tk] = mgr
+
+                    # Use team name as fallback if manager is hidden
+                    if mgr == "--hidden--" and name != "--hidden--" and name != "Unknown":
+                        display_name = name
+                    elif mgr != "--hidden--" and mgr != "Unknown":
+                        display_name = f"{mgr} ({name})"
+                    else:
+                        display_name = name if name != "Unknown" else mgr
+
+                    team_display[tk] = display_name
+                    team_to_manager[tk] = mgr if mgr != "--hidden--" else name
 
                 # Fetch matchups
                 for week in range(1, 18):
@@ -155,8 +170,30 @@ class ReportGenerator:
                         t1_key = t1.get("team_key", "")
                         t2_key = t2.get("team_key", "")
 
-                        t1_name = team_display.get(t1_key, f"{clean(t1.get('manager'))} ({clean(t1.get('name'))})")
-                        t2_name = team_display.get(t2_key, f"{clean(t2.get('manager'))} ({clean(t2.get('name'))})")
+                        # Get team name - prefer team_display, fallback to matchup data
+                        if t1_key in team_display:
+                            t1_name = team_display[t1_key]
+                        else:
+                            t1_mgr = clean(t1.get('manager'))
+                            t1_team = clean(t1.get('name'))
+                            if t1_mgr == "--hidden--" and t1_team != "--hidden--":
+                                t1_name = t1_team
+                            elif t1_mgr != "--hidden--":
+                                t1_name = f"{t1_mgr} ({t1_team})"
+                            else:
+                                t1_name = t1_team
+
+                        if t2_key in team_display:
+                            t2_name = team_display[t2_key]
+                        else:
+                            t2_mgr = clean(t2.get('manager'))
+                            t2_team = clean(t2.get('name'))
+                            if t2_mgr == "--hidden--" and t2_team != "--hidden--":
+                                t2_name = t2_team
+                            elif t2_mgr != "--hidden--":
+                                t2_name = f"{t2_mgr} ({t2_team})"
+                            else:
+                                t2_name = t2_team
 
                         is_playoff = m.get("is_playoff", False)
 

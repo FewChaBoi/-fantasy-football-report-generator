@@ -156,13 +156,13 @@ class ReportGenerator:
                     mgr = clean(tv.get("manager", "Unknown"))
                     name = clean(tv.get("name", "Unknown"))
 
-                    # Use team name as fallback if manager is hidden
-                    if mgr == "--hidden--" and name != "--hidden--" and name != "Unknown":
-                        display_name = name
-                    elif mgr != "--hidden--" and mgr != "Unknown":
-                        display_name = f"{mgr} ({name})"
+                    # Prioritize manager name first, fall back to team name
+                    if mgr != "--hidden--" and mgr != "Unknown":
+                        display_name = f"{mgr} ({name})"  # Manager available - use it
+                    elif name != "--hidden--" and name != "Unknown":
+                        display_name = name  # Fall back to team name
                     else:
-                        display_name = name if name != "Unknown" else mgr
+                        display_name = mgr  # Last resort
 
                     team_display[tk] = display_name
                     team_to_manager[tk] = mgr if mgr != "--hidden--" else name

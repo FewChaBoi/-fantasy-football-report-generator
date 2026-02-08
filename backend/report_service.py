@@ -435,13 +435,39 @@ class ReportGenerator:
         # Determine championships
         if not self.standings_df.empty and not self.matchups_df.empty:
             for season in self.standings_df['season'].unique():
-                champ = self.matchups_df[
+                # Get playoff teams' ranks for this season
+                season_standings = self.standings_df[self.standings_df['season'] == season]
+                team_ranks = dict(zip(season_standings['team_name'], season_standings['rank']))
+
+                # Get all games marked as championship (week 16+)
+                champ_games = self.matchups_df[
                     (self.matchups_df['season'] == season) &
                     (self.matchups_df['is_championship'])
                 ]
-                for _, m in champ.iterrows():
-                    winner = m['team1_name'] if m['score1'] > m['score2'] else m['team2_name']
-                    loser = m['team2_name'] if m['score1'] > m['score2'] else m['team1_name']
+
+                if champ_games.empty:
+                    continue
+
+                # Find the actual championship game:
+                # It's the one between the two highest-ranked (lowest rank number) teams
+                # This distinguishes it from 3rd place, 5th place, and consolation games
+                best_matchup = None
+                best_combined_rank = float('inf')
+
+                for _, m in champ_games.iterrows():
+                    t1_rank = team_ranks.get(m['team1_name'], 99)
+                    t2_rank = team_ranks.get(m['team2_name'], 99)
+                    combined_rank = t1_rank + t2_rank
+
+                    # The championship should be between top-seeded teams (lowest ranks)
+                    if combined_rank < best_combined_rank:
+                        best_combined_rank = combined_rank
+                        best_matchup = m
+
+                if best_matchup is not None:
+                    winner = best_matchup['team1_name'] if best_matchup['score1'] > best_matchup['score2'] else best_matchup['team2_name']
+                    loser = best_matchup['team2_name'] if best_matchup['score1'] > best_matchup['score2'] else best_matchup['team1_name']
+
                     self.standings_df.loc[
                         (self.standings_df['season'] == season) &
                         (self.standings_df['team_name'] == winner),
@@ -673,7 +699,7 @@ class ReportGenerator:
         add_section("5. Championships & Playoffs")
 
         if not self.standings_df.empty:
-            podium_by_year = playoffs.get_podium_by_year(self.standings_df)
+            podium_by_year = playoffs.get_podium_by_year(self.standings_df, self.matchups_df)
             add_table_from_df(
                 podium_by_year,
                 columns=["season", "1st", "2nd", "3rd"],
@@ -682,7 +708,7 @@ class ReportGenerator:
                 title="Playoff Podium by Year",
             )
 
-            placement_counts = playoffs.get_placement_counts(self.standings_df)
+            placement_counts = playoffs.get_placement_counts(self.standings_df, self.matchups_df)
             add_table_from_df(
                 placement_counts,
                 columns=["team_name", "1st", "2nd", "3rd", "total_podium", "seasons"],

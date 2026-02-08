@@ -58,32 +58,48 @@ def get_championship_counts(standings_df: pd.DataFrame) -> pd.DataFrame:
     ).reset_index(drop=True)
 
 
-def get_placement_counts(standings_df: pd.DataFrame) -> pd.DataFrame:
+def get_placement_counts(standings_df: pd.DataFrame, matchups_df: pd.DataFrame = None) -> pd.DataFrame:
     """Get 1st, 2nd, 3rd place finishes and total podium finishes by manager.
 
+    Uses playoff results (won_championship, finals_appearance) instead of regular season rank.
+
     Args:
-        standings_df: DataFrame from fetch_all_standings with rank info
+        standings_df: DataFrame from fetch_all_standings with championship info
+        matchups_df: DataFrame from fetch_all_matchups (optional, for 3rd place)
 
     Returns:
         DataFrame with team_name, 1st, 2nd, 3rd, total_podium, seasons
     """
-    if standings_df.empty or "rank" not in standings_df.columns:
+    if standings_df.empty:
         return pd.DataFrame()
 
-    # Count placements
-    standings_df = standings_df.copy()
-    standings_df["first"] = (standings_df["rank"] == 1).astype(int)
-    standings_df["second"] = (standings_df["rank"] == 2).astype(int)
-    standings_df["third"] = (standings_df["rank"] == 3).astype(int)
+    # Use podium_by_year to get accurate placements
+    podium = get_podium_by_year(standings_df, matchups_df)
 
-    placements = standings_df.groupby("team_name").agg({
-        "first": "sum",
-        "second": "sum",
-        "third": "sum",
-        "season": "count",
-    }).reset_index()
+    if podium.empty:
+        return pd.DataFrame()
 
-    placements.columns = ["team_name", "1st", "2nd", "3rd", "seasons"]
+    # Count placements from podium data
+    first_counts = podium["1st"].value_counts().to_dict()
+    second_counts = podium["2nd"].value_counts().to_dict()
+    third_counts = podium["3rd"].value_counts().to_dict()
+
+    # Get all unique team names
+    all_teams = set(standings_df["team_name"].unique())
+
+    # Build placement data
+    placement_data = []
+    for team in all_teams:
+        seasons_played = len(standings_df[standings_df["team_name"] == team]["season"].unique())
+        placement_data.append({
+            "team_name": team,
+            "1st": first_counts.get(team, 0),
+            "2nd": second_counts.get(team, 0),
+            "3rd": third_counts.get(team, 0),
+            "seasons": seasons_played,
+        })
+
+    placements = pd.DataFrame(placement_data)
     placements["total_podium"] = placements["1st"] + placements["2nd"] + placements["3rd"]
 
     return placements.sort_values(
@@ -91,16 +107,17 @@ def get_placement_counts(standings_df: pd.DataFrame) -> pd.DataFrame:
     ).reset_index(drop=True)
 
 
-def get_podium_by_year(standings_df: pd.DataFrame) -> pd.DataFrame:
-    """Get 1st, 2nd, and 3rd place finishers for each year.
+def get_podium_by_year(standings_df: pd.DataFrame, matchups_df: pd.DataFrame = None) -> pd.DataFrame:
+    """Get 1st, 2nd, and 3rd place finishers for each year based on playoff results.
 
     Args:
-        standings_df: DataFrame from fetch_all_standings with rank info
+        standings_df: DataFrame from fetch_all_standings with championship info
+        matchups_df: DataFrame from fetch_all_matchups (optional, for 3rd place determination)
 
     Returns:
         DataFrame with season, 1st place, 2nd place, 3rd place
     """
-    if standings_df.empty or "rank" not in standings_df.columns:
+    if standings_df.empty:
         return pd.DataFrame()
 
     podium_data = []
@@ -108,15 +125,59 @@ def get_podium_by_year(standings_df: pd.DataFrame) -> pd.DataFrame:
     for season in sorted(standings_df["season"].unique(), reverse=True):
         season_df = standings_df[standings_df["season"] == season]
 
-        first = season_df[season_df["rank"] == 1]["team_name"].values
-        second = season_df[season_df["rank"] == 2]["team_name"].values
-        third = season_df[season_df["rank"] == 3]["team_name"].values
+        # 1st place = championship winner (won_championship == True)
+        first_place = ""
+        if "won_championship" in season_df.columns:
+            champ = season_df[season_df["won_championship"] == True]["team_name"].values
+            if len(champ) > 0:
+                first_place = champ[0]
+
+        # 2nd place = finals loser (finals_appearance == True but won_championship == False)
+        second_place = ""
+        if "finals_appearance" in season_df.columns and "won_championship" in season_df.columns:
+            runner_up = season_df[
+                (season_df["finals_appearance"] == True) &
+                (season_df["won_championship"] == False)
+            ]["team_name"].values
+            if len(runner_up) > 0:
+                second_place = runner_up[0]
+
+        # 3rd place: Try to determine from playoff matchups if available
+        # Otherwise fall back to rank 3 from standings
+        third_place = ""
+        if matchups_df is not None and not matchups_df.empty:
+            # Look for 3rd place game (typically week 16 or 17, playoff but not championship)
+            season_playoffs = matchups_df[
+                (matchups_df["season"] == season) &
+                (matchups_df["is_playoff"] == True) &
+                (matchups_df["is_championship"] == False)
+            ]
+            # Get the last week of non-championship playoff games (3rd place game week)
+            if not season_playoffs.empty:
+                last_playoff_week = season_playoffs["week"].max()
+                third_place_games = season_playoffs[season_playoffs["week"] == last_playoff_week]
+
+                # Find the game that doesn't include the finalists
+                for _, game in third_place_games.iterrows():
+                    t1, t2 = game["team1_name"], game["team2_name"]
+                    s1, s2 = game["score1"], game["score2"]
+
+                    # If neither team is a finalist, this is the 3rd place game
+                    if t1 not in [first_place, second_place] and t2 not in [first_place, second_place]:
+                        third_place = t1 if s1 > s2 else t2
+                        break
+
+        # Fall back to rank 3 if we couldn't determine 3rd place from matchups
+        if not third_place and "rank" in season_df.columns:
+            third = season_df[season_df["rank"] == 3]["team_name"].values
+            if len(third) > 0:
+                third_place = third[0]
 
         podium_data.append({
             "season": season,
-            "1st": first[0] if len(first) > 0 else "",
-            "2nd": second[0] if len(second) > 0 else "",
-            "3rd": third[0] if len(third) > 0 else "",
+            "1st": first_place,
+            "2nd": second_place,
+            "3rd": third_place,
         })
 
     return pd.DataFrame(podium_data)

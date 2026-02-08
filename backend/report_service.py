@@ -22,7 +22,9 @@ from reportlab.platypus import (
     Table, TableStyle, KeepTogether, HRFlowable
 )
 
-from yahoo_api import YahooFantasyAPI
+from typing import Union
+# Import for type hints only - works with any API that implements the required methods
+# (duck typing for YahooFantasyAPI and SleeperFantasyAPI)
 from analysis import (
     head_to_head, scoring, wins, playoffs, games,
     luck, trades, waivers, consistency
@@ -105,15 +107,24 @@ def get_manager_name(full_name):
 
 
 class ReportGenerator:
-    """Generate fantasy football reports."""
+    """Generate fantasy football reports.
 
-    def __init__(self, api: YahooFantasyAPI):
+    Works with any API that implements the required methods (duck typing):
+    - get_league_teams(league_key) -> dict
+    - get_matchups(league_key, week) -> List[dict]
+    - get_league_standings(league_key) -> List[dict]
+    - get_transactions(league_key, type, count) -> List[dict]  (optional)
+    """
+
+    def __init__(self, api):
         self.api = api
         self.matchups_df = pd.DataFrame()
         self.standings_df = pd.DataFrame()
         self.trades_df = pd.DataFrame()
         self.adds_df = pd.DataFrame()
         self.seasons = []
+        # Detect platform type based on API class name
+        self.is_sleeper = 'Sleeper' in type(api).__name__
 
     async def fetch_all_data(self, league_keys: List[Tuple[str, int]], job: Any):
         """Fetch all data for the given leagues."""
@@ -156,6 +167,15 @@ class ReportGenerator:
                     team_display[tk] = display_name
                     team_to_manager[tk] = mgr if mgr != "--hidden--" else name
 
+                # Get playoff week start for Sleeper
+                playoff_week_start = 15  # default
+                if self.is_sleeper:
+                    try:
+                        settings = await self.api.get_league_settings(league_key)
+                        playoff_week_start = settings.get("playoff_week_start", 15)
+                    except:
+                        pass
+
                 # Fetch matchups
                 for week in range(1, 18):
                     matchups = await self.api.get_matchups(league_key, week)
@@ -167,8 +187,15 @@ class ReportGenerator:
                         t1 = m["team1"]
                         t2 = m["team2"]
 
-                        t1_key = t1.get("team_key", "")
-                        t2_key = t2.get("team_key", "")
+                        # Handle both Yahoo (team_key) and Sleeper (roster_id) formats
+                        if self.is_sleeper:
+                            t1_key = str(t1.get("roster_id", ""))
+                            t2_key = str(t2.get("roster_id", ""))
+                            is_playoff = week >= playoff_week_start
+                        else:
+                            t1_key = t1.get("team_key", "")
+                            t2_key = t2.get("team_key", "")
+                            is_playoff = m.get("is_playoff", False)
 
                         # Get team name - prefer team_display, fallback to matchup data
                         if t1_key in team_display:
@@ -181,7 +208,7 @@ class ReportGenerator:
                             elif t1_mgr != "--hidden--":
                                 t1_name = f"{t1_mgr} ({t1_team})"
                             else:
-                                t1_name = t1_team
+                                t1_name = t1_team if t1_team else f"Team {t1_key}"
 
                         if t2_key in team_display:
                             t2_name = team_display[t2_key]
@@ -193,9 +220,7 @@ class ReportGenerator:
                             elif t2_mgr != "--hidden--":
                                 t2_name = f"{t2_mgr} ({t2_team})"
                             else:
-                                t2_name = t2_team
-
-                        is_playoff = m.get("is_playoff", False)
+                                t2_name = t2_team if t2_team else f"Team {t2_key}"
 
                         all_matchups.append({
                             'season': season,
@@ -243,101 +268,148 @@ class ReportGenerator:
 
                 # Fetch transactions
                 try:
-                    trade_txns = await self.api.get_transactions(league_key, "trade", 100)
-                    add_txns = await self.api.get_transactions(league_key, "add", 200)
-
-                    for txn in trade_txns:
-                        ts = txn.get("timestamp")
-                        txn_date = None
-                        if ts:
+                    if self.is_sleeper:
+                        # Sleeper: fetch transactions for each week
+                        for week in range(1, 18):
                             try:
-                                txn_date = datetime.fromtimestamp(int(ts))
+                                txns = await self.api.get_transactions(league_key, week)
+                                for txn in txns:
+                                    txn_type = txn.get("type")
+                                    ts = txn.get("created")
+                                    txn_date = None
+                                    if ts:
+                                        try:
+                                            txn_date = datetime.fromtimestamp(int(ts) / 1000)
+                                        except:
+                                            pass
+
+                                    roster_ids = txn.get("roster_ids", [])
+
+                                    if txn_type == "trade" and len(roster_ids) >= 2:
+                                        trade_id = f"{season}_{ts}"
+                                        # For Sleeper trades, we just track that a trade happened
+                                        from_mgr = team_to_manager.get(str(roster_ids[0]), 'Unknown')
+                                        to_mgr = team_to_manager.get(str(roster_ids[1]), 'Unknown')
+                                        all_trades.append({
+                                            'season': season,
+                                            'trade_id': trade_id,
+                                            'date': txn_date,
+                                            'player_name': 'Trade',
+                                            'from_manager': from_mgr,
+                                            'to_manager': to_mgr,
+                                        })
+
+                                    elif txn_type in ("free_agent", "waiver"):
+                                        adds = txn.get("adds") or {}
+                                        for player_id, roster_id in adds.items():
+                                            mgr = team_to_manager.get(str(roster_id), 'Unknown')
+                                            all_adds.append({
+                                                'season': season,
+                                                'date': txn_date,
+                                                'player_name': f'Player {player_id}',
+                                                'manager': mgr,
+                                                'source_type': txn_type,
+                                                'is_waiver': txn_type == 'waiver',
+                                            })
                             except:
-                                pass
+                                break
+                    else:
+                        # Yahoo: use existing transaction parsing
+                        trade_txns = await self.api.get_transactions(league_key, "trade", 100)
+                        add_txns = await self.api.get_transactions(league_key, "add", 200)
 
-                        trade_id = f"{season}_{ts}"
-                        players = txn.get("players", {})
+                        for txn in trade_txns:
+                            ts = txn.get("timestamp")
+                            txn_date = None
+                            if ts:
+                                try:
+                                    txn_date = datetime.fromtimestamp(int(ts))
+                                except:
+                                    pass
 
-                        # Handle players being either a dict or a list
-                        players_iter = []
-                        if isinstance(players, dict):
-                            players_iter = [(k, v) for k, v in players.items() if k != "count" and isinstance(v, dict)]
-                        elif isinstance(players, list):
-                            players_iter = [(str(i), p) for i, p in enumerate(players) if isinstance(p, dict)]
+                            trade_id = f"{season}_{ts}"
+                            players = txn.get("players", {})
 
-                        for key, val in players_iter:
-                            player = val.get("player", [])
-                            if not player:
-                                continue
+                            # Handle players being either a dict or a list
+                            players_iter = []
+                            if isinstance(players, dict):
+                                players_iter = [(k, v) for k, v in players.items() if k != "count" and isinstance(v, dict)]
+                            elif isinstance(players, list):
+                                players_iter = [(str(i), p) for i, p in enumerate(players) if isinstance(p, dict)]
 
-                            player_name = "Unknown"
-                            pinfo = player[0] if isinstance(player[0], list) else []
-                            for item in pinfo:
-                                if isinstance(item, dict) and "name" in item:
-                                    player_name = clean(item["name"].get("full", "Unknown"))
+                            for key, val in players_iter:
+                                player = val.get("player", [])
+                                if not player:
+                                    continue
 
-                            if len(player) > 1:
-                                td = player[1].get("transaction_data", [{}])
-                                if isinstance(td, list) and td:
-                                    td = td[0]
-                                dest = td.get("destination_team_key", "")
-                                source = td.get("source_team_key", "")
+                                player_name = "Unknown"
+                                pinfo = player[0] if isinstance(player[0], list) else []
+                                for item in pinfo:
+                                    if isinstance(item, dict) and "name" in item:
+                                        player_name = clean(item["name"].get("full", "Unknown"))
 
-                                all_trades.append({
-                                    'season': season,
-                                    'trade_id': trade_id,
-                                    'date': txn_date,
-                                    'player_name': player_name,
-                                    'from_manager': team_to_manager.get(source, 'Unknown'),
-                                    'to_manager': team_to_manager.get(dest, 'Unknown'),
-                                })
-
-                    for txn in add_txns:
-                        ts = txn.get("timestamp")
-                        txn_date = None
-                        if ts:
-                            try:
-                                txn_date = datetime.fromtimestamp(int(ts))
-                            except:
-                                pass
-
-                        players = txn.get("players", {})
-
-                        # Handle players being either a dict or a list
-                        players_iter = []
-                        if isinstance(players, dict):
-                            players_iter = [(k, v) for k, v in players.items() if k != "count" and isinstance(v, dict)]
-                        elif isinstance(players, list):
-                            players_iter = [(str(i), p) for i, p in enumerate(players) if isinstance(p, dict)]
-
-                        for key, val in players_iter:
-                            player = val.get("player", [])
-                            if not player:
-                                continue
-
-                            player_name = "Unknown"
-                            pinfo = player[0] if isinstance(player[0], list) else []
-                            for item in pinfo:
-                                if isinstance(item, dict) and "name" in item:
-                                    player_name = clean(item["name"].get("full", "Unknown"))
-
-                            if len(player) > 1:
-                                td = player[1].get("transaction_data", {})
-                                if isinstance(td, list) and td:
-                                    td = td[0]
-
-                                if td.get("type") in ("add", "claim"):
+                                if len(player) > 1:
+                                    td = player[1].get("transaction_data", [{}])
+                                    if isinstance(td, list) and td:
+                                        td = td[0]
                                     dest = td.get("destination_team_key", "")
-                                    source_type = td.get("source_type", "")
+                                    source = td.get("source_team_key", "")
 
-                                    all_adds.append({
+                                    all_trades.append({
                                         'season': season,
+                                        'trade_id': trade_id,
                                         'date': txn_date,
                                         'player_name': player_name,
-                                        'manager': team_to_manager.get(dest, 'Unknown'),
-                                        'source_type': source_type,
-                                        'is_waiver': source_type == 'waivers',
+                                        'from_manager': team_to_manager.get(source, 'Unknown'),
+                                        'to_manager': team_to_manager.get(dest, 'Unknown'),
                                     })
+
+                        for txn in add_txns:
+                            ts = txn.get("timestamp")
+                            txn_date = None
+                            if ts:
+                                try:
+                                    txn_date = datetime.fromtimestamp(int(ts))
+                                except:
+                                    pass
+
+                            players = txn.get("players", {})
+
+                            # Handle players being either a dict or a list
+                            players_iter = []
+                            if isinstance(players, dict):
+                                players_iter = [(k, v) for k, v in players.items() if k != "count" and isinstance(v, dict)]
+                            elif isinstance(players, list):
+                                players_iter = [(str(i), p) for i, p in enumerate(players) if isinstance(p, dict)]
+
+                            for key, val in players_iter:
+                                player = val.get("player", [])
+                                if not player:
+                                    continue
+
+                                player_name = "Unknown"
+                                pinfo = player[0] if isinstance(player[0], list) else []
+                                for item in pinfo:
+                                    if isinstance(item, dict) and "name" in item:
+                                        player_name = clean(item["name"].get("full", "Unknown"))
+
+                                if len(player) > 1:
+                                    td = player[1].get("transaction_data", {})
+                                    if isinstance(td, list) and td:
+                                        td = td[0]
+
+                                    if td.get("type") in ("add", "claim"):
+                                        dest = td.get("destination_team_key", "")
+                                        source_type = td.get("source_type", "")
+
+                                        all_adds.append({
+                                            'season': season,
+                                            'date': txn_date,
+                                            'player_name': player_name,
+                                            'manager': team_to_manager.get(dest, 'Unknown'),
+                                            'source_type': source_type,
+                                            'is_waiver': source_type == 'waivers',
+                                        })
                 except Exception as e:
                     print(f"Transaction error for {season}: {e}")
 

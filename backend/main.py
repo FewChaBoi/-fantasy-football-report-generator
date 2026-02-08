@@ -16,7 +16,8 @@ from itsdangerous import URLSafeTimedSerializer
 
 from config import get_settings
 from auth import yahoo_oauth, YahooTokens
-from yahoo_api import YahooFantasyAPI, discover_league_history, NFL_GAME_IDS, get_year_from_game_id
+from yahoo_api import YahooFantasyAPI, discover_league_history as yahoo_discover_league_history, NFL_GAME_IDS, get_year_from_game_id
+from sleeper_api import SleeperFantasyAPI, SleeperUser, lookup_user as sleeper_lookup_user, discover_league_history as sleeper_discover_league_history
 from report_service import ReportGenerator
 
 # Initialize FastAPI app
@@ -53,6 +54,18 @@ jobs = {}
 class ReportRequest(BaseModel):
     """Request model for report generation."""
     league_key: str
+    start_year: Optional[int] = None
+    end_year: Optional[int] = None
+
+
+class SleeperConnectRequest(BaseModel):
+    """Request model for Sleeper connection."""
+    username: str
+
+
+class SleeperReportRequest(BaseModel):
+    """Request model for Sleeper report generation."""
+    league_id: str
     start_year: Optional[int] = None
     end_year: Optional[int] = None
 
@@ -153,6 +166,7 @@ async def oauth_callback(code: str = None, state: str = None, error: str = None)
         # Store tokens in session
         session_id = str(uuid.uuid4())
         sessions[session_id] = {
+            "platform": "yahoo",
             "tokens": tokens.to_dict(),
             "created": datetime.utcnow().isoformat(),
         }
@@ -183,13 +197,28 @@ async def auth_status(request: Request):
     session_id = request.cookies.get("session_id")
 
     if not session_id or session_id not in sessions:
-        return {"authenticated": False}
+        return {"authenticated": False, "platform": None}
 
     session = sessions[session_id]
-    if "tokens" not in session:
-        return {"authenticated": False}
+    platform = session.get("platform")
 
-    return {"authenticated": True}
+    # Check for Yahoo session
+    if platform == "yahoo":
+        if "tokens" not in session:
+            return {"authenticated": False, "platform": None}
+        return {"authenticated": True, "platform": "yahoo"}
+
+    # Check for Sleeper session
+    if platform == "sleeper":
+        if "sleeper_user" not in session:
+            return {"authenticated": False, "platform": None}
+        return {
+            "authenticated": True,
+            "platform": "sleeper",
+            "username": session["sleeper_user"].get("username"),
+        }
+
+    return {"authenticated": False, "platform": None}
 
 
 @app.post("/auth/logout")
@@ -203,6 +232,132 @@ async def logout(request: Request):
     response = JSONResponse({"success": True})
     response.delete_cookie("session_id")
     return response
+
+
+# =====================
+# Sleeper Auth Routes
+# =====================
+
+@app.post("/auth/sleeper/connect")
+async def sleeper_connect(connect_request: SleeperConnectRequest):
+    """Connect to Sleeper via username lookup."""
+    username = connect_request.username.strip()
+
+    if not username:
+        raise HTTPException(status_code=400, detail="Username is required")
+
+    try:
+        user = await sleeper_lookup_user(username)
+
+        if not user:
+            raise HTTPException(status_code=404, detail=f"Sleeper user '{username}' not found")
+
+        # Create session
+        session_id = str(uuid.uuid4())
+        sessions[session_id] = {
+            "platform": "sleeper",
+            "sleeper_user": user.to_dict(),
+            "created": datetime.utcnow().isoformat(),
+        }
+
+        response = JSONResponse({
+            "success": True,
+            "user": {
+                "user_id": user.user_id,
+                "username": user.username,
+                "display_name": user.display_name,
+            }
+        })
+        response.set_cookie(
+            key="session_id",
+            value=session_id,
+            httponly=True,
+            max_age=3600 * 24,  # 24 hours
+            samesite="lax",
+        )
+        return response
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Sleeper connect error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to connect to Sleeper")
+
+
+@app.get("/api/sleeper/leagues")
+async def get_sleeper_leagues(request: Request):
+    """Get user's Sleeper leagues."""
+    session_id = request.cookies.get("session_id")
+
+    if not session_id or session_id not in sessions:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    session = sessions[session_id]
+    if session.get("platform") != "sleeper" or "sleeper_user" not in session:
+        raise HTTPException(status_code=401, detail="Not authenticated with Sleeper")
+
+    user = SleeperUser.from_dict(session["sleeper_user"])
+    api = SleeperFantasyAPI(user)
+
+    # Get leagues for recent years
+    all_leagues = []
+    current_year = datetime.now().year
+
+    for year in range(current_year, current_year - 3, -1):
+        try:
+            leagues = await api.get_user_leagues(year)
+            for league in leagues:
+                all_leagues.append({
+                    "league_id": league["league_id"],
+                    "name": league["name"],
+                    "year": year,
+                    "total_rosters": league.get("total_rosters", 0),
+                })
+        except Exception as e:
+            print(f"[Sleeper] Error getting leagues for {year}: {e}")
+            continue
+
+    return {"leagues": all_leagues}
+
+
+@app.post("/api/sleeper/report/generate")
+async def generate_sleeper_report(
+    request: Request,
+    report_request: SleeperReportRequest,
+    background_tasks: BackgroundTasks,
+):
+    """Start Sleeper report generation."""
+    session_id = request.cookies.get("session_id")
+
+    if not session_id or session_id not in sessions:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    session = sessions[session_id]
+    if session.get("platform") != "sleeper" or "sleeper_user" not in session:
+        raise HTTPException(status_code=401, detail="Not authenticated with Sleeper")
+
+    user = SleeperUser.from_dict(session["sleeper_user"])
+
+    # Create job
+    job_id = str(uuid.uuid4())
+    jobs[job_id] = JobStatus(
+        job_id=job_id,
+        status="pending",
+        progress=0,
+        message="Starting report generation...",
+    )
+
+    # Start background task
+    background_tasks.add_task(
+        generate_sleeper_report_task,
+        job_id,
+        report_request.league_id,
+        user,
+        report_request.start_year,
+        report_request.end_year,
+    )
+
+    return {"job_id": job_id}
 
 
 @app.get("/api/leagues")
@@ -340,7 +495,7 @@ async def generate_report_task(
         job.progress = 10
         job.message = "Discovering league history..."
 
-        league_keys, league_name = await discover_league_history(api, league_key)
+        league_keys, league_name = await yahoo_discover_league_history(api, league_key)
 
         # Filter by year range if specified
         if start_year or end_year:
@@ -381,6 +536,76 @@ async def generate_report_task(
 
     except Exception as e:
         print(f"Report generation error: {e}")
+        import traceback
+        traceback.print_exc()
+
+        job = jobs[job_id]
+        job.status = "failed"
+        job.error = str(e)
+        job.message = f"Error: {str(e)}"
+
+
+async def generate_sleeper_report_task(
+    job_id: str,
+    league_id: str,
+    user: SleeperUser,
+    start_year: Optional[int] = None,
+    end_year: Optional[int] = None,
+):
+    """Background task to generate Sleeper report."""
+    try:
+        job = jobs[job_id]
+        job.status = "processing"
+        job.progress = 5
+        job.message = "Connecting to Sleeper..."
+
+        api = SleeperFantasyAPI(user)
+
+        # Discover league history
+        job.progress = 10
+        job.message = "Discovering league history..."
+
+        league_ids, league_name = await sleeper_discover_league_history(api, league_id)
+
+        # Filter by year range if specified
+        if start_year or end_year:
+            filtered_ids = []
+            for lid, year in league_ids:
+                if start_year and year < start_year:
+                    continue
+                if end_year and year > end_year:
+                    continue
+                filtered_ids.append((lid, year))
+            league_ids = filtered_ids
+
+            if not league_ids:
+                raise ValueError(f"No seasons found in the specified year range ({start_year or 'any'} - {end_year or 'any'})")
+
+        job.progress = 20
+        years_found = [y for _, y in league_ids]
+        if start_year or end_year:
+            job.message = f"Processing {len(league_ids)} seasons ({min(years_found)}-{max(years_found)}) for '{league_name}'"
+        else:
+            job.message = f"Found {len(league_ids)} seasons for '{league_name}'"
+
+        # Fetch all data
+        generator = ReportGenerator(api)
+        await generator.fetch_all_data(league_ids, job)
+
+        # Generate PDF
+        job.progress = 90
+        job.message = "Generating PDF report..."
+
+        output_path = reports_dir / f"{job_id}.pdf"
+        await generator.generate_pdf(league_name, output_path)
+
+        job.status = "completed"
+        job.progress = 100
+        job.message = "Report ready for download!"
+        job.download_url = f"/api/report/download/{job_id}"
+
+    except Exception as e:
+        print(f"Sleeper report generation error: {e}")
         import traceback
         traceback.print_exc()
 

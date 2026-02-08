@@ -3,11 +3,18 @@
  */
 
 // DOM Elements
-const authSection = document.getElementById('auth-section');
+const platformSection = document.getElementById('platform-section');
+const yahooAuthSection = document.getElementById('yahoo-auth-section');
+const sleeperAuthSection = document.getElementById('sleeper-auth-section');
 const mainSection = document.getElementById('main-section');
 const progressSection = document.getElementById('progress-section');
 const downloadSection = document.getElementById('download-section');
 const errorSection = document.getElementById('error-section');
+
+const yahooPlatformBtn = document.getElementById('yahoo-platform-btn');
+const sleeperPlatformBtn = document.getElementById('sleeper-platform-btn');
+const yahooBackBtn = document.getElementById('yahoo-back-btn');
+const sleeperBackBtn = document.getElementById('sleeper-back-btn');
 
 const loginBtn = document.getElementById('login-btn');
 const logoutBtn = document.getElementById('logout-btn');
@@ -16,10 +23,18 @@ const downloadBtn = document.getElementById('download-btn');
 const newReportBtn = document.getElementById('new-report-btn');
 const retryBtn = document.getElementById('retry-btn');
 
+const sleeperUsernameInput = document.getElementById('sleeper-username');
+const sleeperConnectBtn = document.getElementById('sleeper-connect-btn');
+const sleeperError = document.getElementById('sleeper-error');
+
 const leagueSelect = document.getElementById('league-select');
 const leagueKeyInput = document.getElementById('league-key');
+const leagueKeyGroup = document.getElementById('league-key-group');
+const sleeperLeagueIdInput = document.getElementById('sleeper-league-id');
+const sleeperLeagueIdGroup = document.getElementById('sleeper-league-id-group');
 const startYearSelect = document.getElementById('start-year');
 const endYearSelect = document.getElementById('end-year');
+const statusBadge = document.getElementById('status-badge');
 
 const progressFill = document.getElementById('progress-fill');
 const progressText = document.getElementById('progress-text');
@@ -33,6 +48,7 @@ const modalClose = document.querySelector('.modal-close');
 // State
 let currentJobId = null;
 let pollInterval = null;
+let currentPlatform = null; // 'yahoo' or 'sleeper'
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
@@ -62,8 +78,35 @@ function populateYearSelects() {
 
 // Event Listeners
 function setupEventListeners() {
+    // Platform selection
+    yahooPlatformBtn.addEventListener('click', () => {
+        showYahooAuthSection();
+    });
+
+    sleeperPlatformBtn.addEventListener('click', () => {
+        showSleeperAuthSection();
+    });
+
+    // Back buttons
+    yahooBackBtn.addEventListener('click', () => {
+        showPlatformSection();
+    });
+
+    sleeperBackBtn.addEventListener('click', () => {
+        showPlatformSection();
+    });
+
+    // Yahoo login
     loginBtn.addEventListener('click', () => {
         window.location.href = '/auth/login';
+    });
+
+    // Sleeper connect
+    sleeperConnectBtn.addEventListener('click', connectSleeper);
+    sleeperUsernameInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            connectSleeper();
+        }
     });
 
     logoutBtn.addEventListener('click', logout);
@@ -73,7 +116,11 @@ function setupEventListeners() {
 
     leagueSelect.addEventListener('change', (e) => {
         if (e.target.value) {
-            leagueKeyInput.value = e.target.value;
+            if (currentPlatform === 'sleeper') {
+                sleeperLeagueIdInput.value = e.target.value;
+            } else {
+                leagueKeyInput.value = e.target.value;
+            }
         }
     });
 
@@ -116,14 +163,128 @@ async function checkAuthStatus() {
         const data = await response.json();
 
         if (data.authenticated) {
+            currentPlatform = data.platform;
             showMainSection();
-            loadUserLeagues();
+
+            // Update UI based on platform
+            if (currentPlatform === 'sleeper') {
+                statusBadge.textContent = `Connected to Sleeper (${data.username})`;
+                leagueKeyGroup.classList.add('hidden');
+                sleeperLeagueIdGroup.classList.remove('hidden');
+                document.querySelector('.divider').classList.add('hidden');
+                loadSleeperLeagues();
+            } else {
+                statusBadge.textContent = 'Connected to Yahoo';
+                leagueKeyGroup.classList.remove('hidden');
+                sleeperLeagueIdGroup.classList.add('hidden');
+                document.querySelector('.divider').classList.remove('hidden');
+                loadUserLeagues();
+            }
         } else {
-            showAuthSection();
+            showPlatformSection();
         }
     } catch (error) {
         console.error('Auth check failed:', error);
-        showAuthSection();
+        showPlatformSection();
+    }
+}
+
+// Connect to Sleeper
+async function connectSleeper() {
+    const username = sleeperUsernameInput.value.trim();
+
+    if (!username) {
+        showSleeperError('Please enter your Sleeper username');
+        return;
+    }
+
+    sleeperConnectBtn.disabled = true;
+    sleeperConnectBtn.textContent = 'Connecting...';
+    hideSleeperError();
+
+    try {
+        const response = await fetch('/auth/sleeper/connect', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ username }),
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Failed to connect');
+        }
+
+        const data = await response.json();
+
+        if (data.success) {
+            currentPlatform = 'sleeper';
+            showMainSection();
+            statusBadge.textContent = `Connected to Sleeper (${data.user.username})`;
+            leagueKeyGroup.classList.add('hidden');
+            sleeperLeagueIdGroup.classList.remove('hidden');
+            document.querySelector('.divider').classList.add('hidden');
+            loadSleeperLeagues();
+        }
+    } catch (error) {
+        console.error('Sleeper connect failed:', error);
+        showSleeperError(error.message);
+    } finally {
+        sleeperConnectBtn.disabled = false;
+        sleeperConnectBtn.innerHTML = '<span class="btn-icon">🔗</span> Connect to Sleeper';
+    }
+}
+
+function showSleeperError(message) {
+    sleeperError.textContent = message;
+    sleeperError.classList.remove('hidden');
+}
+
+function hideSleeperError() {
+    sleeperError.classList.add('hidden');
+}
+
+// Load Sleeper leagues
+async function loadSleeperLeagues() {
+    leagueSelect.innerHTML = '<option value="">Loading your leagues...</option>';
+
+    try {
+        const response = await fetch('/api/sleeper/leagues');
+
+        if (!response.ok) {
+            throw new Error('Failed to load leagues');
+        }
+
+        const data = await response.json();
+
+        if (data.leagues && data.leagues.length > 0) {
+            leagueSelect.innerHTML = '<option value="">Select a league...</option>';
+
+            // Group leagues by name, keeping the most recent year's ID
+            const leaguesByName = {};
+            data.leagues.forEach(league => {
+                const name = league.name;
+                if (!leaguesByName[name] || league.year > leaguesByName[name].year) {
+                    leaguesByName[name] = league;
+                }
+            });
+
+            // Sort by name and add to dropdown
+            Object.values(leaguesByName)
+                .sort((a, b) => a.name.localeCompare(b.name))
+                .forEach(league => {
+                    const option = document.createElement('option');
+                    option.value = league.league_id;
+                    option.textContent = league.name;
+                    leagueSelect.appendChild(option);
+                });
+        } else {
+            leagueSelect.innerHTML = '<option value="">No leagues found - enter ID manually</option>';
+        }
+    } catch (error) {
+        console.error('Failed to load Sleeper leagues:', error);
+        leagueSelect.innerHTML = '<option value="">Could not load leagues - enter ID manually</option>';
     }
 }
 
@@ -181,18 +342,37 @@ async function loadUserLeagues() {
 
 // Report Generation
 async function startGeneration() {
-    const leagueKey = leagueKeyInput.value.trim();
+    let leagueIdentifier;
+    let apiEndpoint;
+    let requestBody;
 
-    if (!leagueKey) {
-        alert('Please enter a league key or select a league');
-        return;
-    }
+    if (currentPlatform === 'sleeper') {
+        leagueIdentifier = sleeperLeagueIdInput.value.trim();
 
-    // Validate format
-    const parts = leagueKey.split('.');
-    if (parts.length !== 3 || parts[1] !== 'l') {
-        alert('Invalid league key format. Expected format: 461.l.333910');
-        return;
+        if (!leagueIdentifier) {
+            alert('Please enter a league ID or select a league');
+            return;
+        }
+
+        apiEndpoint = '/api/sleeper/report/generate';
+        requestBody = { league_id: leagueIdentifier };
+    } else {
+        leagueIdentifier = leagueKeyInput.value.trim();
+
+        if (!leagueIdentifier) {
+            alert('Please enter a league key or select a league');
+            return;
+        }
+
+        // Validate Yahoo format
+        const parts = leagueIdentifier.split('.');
+        if (parts.length !== 3 || parts[1] !== 'l') {
+            alert('Invalid league key format. Expected format: 461.l.333910');
+            return;
+        }
+
+        apiEndpoint = '/api/report/generate';
+        requestBody = { league_key: leagueIdentifier };
     }
 
     // Get year range
@@ -205,14 +385,13 @@ async function startGeneration() {
         return;
     }
 
+    if (startYear) requestBody.start_year = startYear;
+    if (endYear) requestBody.end_year = endYear;
+
     showProgressSection();
 
     try {
-        const requestBody = { league_key: leagueKey };
-        if (startYear) requestBody.start_year = startYear;
-        if (endYear) requestBody.end_year = endYear;
-
-        const response = await fetch('/api/report/generate', {
+        const response = await fetch(apiEndpoint, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -267,16 +446,42 @@ function updateProgress(percent, message) {
 }
 
 // UI State Management
-function showAuthSection() {
-    authSection.classList.remove('hidden');
+function showPlatformSection() {
+    platformSection.classList.remove('hidden');
+    yahooAuthSection.classList.add('hidden');
+    sleeperAuthSection.classList.add('hidden');
     mainSection.classList.add('hidden');
     progressSection.classList.add('hidden');
     downloadSection.classList.add('hidden');
     errorSection.classList.add('hidden');
 }
 
+function showYahooAuthSection() {
+    platformSection.classList.add('hidden');
+    yahooAuthSection.classList.remove('hidden');
+    sleeperAuthSection.classList.add('hidden');
+    mainSection.classList.add('hidden');
+    progressSection.classList.add('hidden');
+    downloadSection.classList.add('hidden');
+    errorSection.classList.add('hidden');
+}
+
+function showSleeperAuthSection() {
+    platformSection.classList.add('hidden');
+    yahooAuthSection.classList.add('hidden');
+    sleeperAuthSection.classList.remove('hidden');
+    mainSection.classList.add('hidden');
+    progressSection.classList.add('hidden');
+    downloadSection.classList.add('hidden');
+    errorSection.classList.add('hidden');
+    sleeperUsernameInput.value = '';
+    hideSleeperError();
+}
+
 function showMainSection() {
-    authSection.classList.add('hidden');
+    platformSection.classList.add('hidden');
+    yahooAuthSection.classList.add('hidden');
+    sleeperAuthSection.classList.add('hidden');
     mainSection.classList.remove('hidden');
     progressSection.classList.add('hidden');
     downloadSection.classList.add('hidden');
@@ -284,7 +489,9 @@ function showMainSection() {
 }
 
 function showProgressSection() {
-    authSection.classList.add('hidden');
+    platformSection.classList.add('hidden');
+    yahooAuthSection.classList.add('hidden');
+    sleeperAuthSection.classList.add('hidden');
     mainSection.classList.add('hidden');
     progressSection.classList.remove('hidden');
     downloadSection.classList.add('hidden');
@@ -295,7 +502,9 @@ function showProgressSection() {
 }
 
 function showDownloadSection() {
-    authSection.classList.add('hidden');
+    platformSection.classList.add('hidden');
+    yahooAuthSection.classList.add('hidden');
+    sleeperAuthSection.classList.add('hidden');
     mainSection.classList.add('hidden');
     progressSection.classList.add('hidden');
     downloadSection.classList.remove('hidden');
@@ -303,7 +512,9 @@ function showDownloadSection() {
 }
 
 function showError(message) {
-    authSection.classList.add('hidden');
+    platformSection.classList.add('hidden');
+    yahooAuthSection.classList.add('hidden');
+    sleeperAuthSection.classList.add('hidden');
     mainSection.classList.add('hidden');
     progressSection.classList.add('hidden');
     downloadSection.classList.add('hidden');

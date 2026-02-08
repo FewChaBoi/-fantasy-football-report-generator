@@ -135,6 +135,70 @@ h1 {
     font-size: 0.875rem;
 }
 
+/* Platform Buttons */
+.platform-buttons {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.platform-buttons .btn {
+    flex: 1;
+    min-width: 200px;
+}
+
+.btn-yahoo {
+    background: linear-gradient(135deg, #6001d2, #7c3aed);
+    color: white;
+}
+
+.btn-yahoo:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 15px rgba(96, 1, 210, 0.4);
+}
+
+.btn-sleeper {
+    background: var(--card-background);
+    color: var(--text-primary);
+    border: 2px solid var(--accent-color);
+}
+
+.btn-sleeper:hover {
+    background: rgba(255, 107, 53, 0.1);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 15px rgba(255, 107, 53, 0.3);
+}
+
+/* Back Button */
+.btn-back {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 0.5rem 0;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    transition: color 0.2s ease;
+}
+
+.btn-back:hover {
+    color: var(--accent-color);
+}
+
+/* Error Text */
+.error-text {
+    color: var(--error-color);
+    font-size: 0.875rem;
+    margin-top: 1rem;
+    padding: 0.75rem;
+    background: rgba(239, 68, 68, 0.1);
+    border-radius: 8px;
+    text-align: center;
+}
+
 .btn-icon {
     font-size: 1.25rem;
 }

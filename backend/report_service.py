@@ -729,6 +729,30 @@ class ReportGenerator:
                 title="Playoff Appearances",
             )
 
+            # Regular Season Standings
+            elements.append(Spacer(1, 0.3 * inch))
+            elements.append(Paragraph("Regular Season Results", subsection_style))
+            elements.append(Spacer(1, 0.1 * inch))
+
+            reg_season_by_year = playoffs.get_regular_season_standings_by_year(self.standings_df)
+            add_table_from_df(
+                reg_season_by_year,
+                columns=["season", "1st", "2nd", "3rd"],
+                column_names={"season": "Year", "1st": "1st Seed", "2nd": "2nd Seed", "3rd": "3rd Seed"},
+                col_widths=[0.6*inch, 1.6*inch, 1.6*inch, 1.6*inch],
+                title="Regular Season Standings by Year",
+            )
+
+            reg_season_counts = playoffs.get_regular_season_placement_counts(self.standings_df)
+            add_table_from_df(
+                reg_season_counts,
+                columns=["team_name", "1st", "2nd", "3rd", "total_top3", "seasons"],
+                column_names={"team_name": "Manager", "1st": "1st", "2nd": "2nd",
+                              "3rd": "3rd", "total_top3": "Total", "seasons": "Seasons"},
+                col_widths=[1.8*inch, 0.5*inch, 0.5*inch, 0.5*inch, 0.6*inch, 0.7*inch],
+                title="Regular Season Top 3 Finishes by Manager",
+            )
+
         # ===== Section 6: Game Extremes =====
         add_section("6. Game Extremes")
 

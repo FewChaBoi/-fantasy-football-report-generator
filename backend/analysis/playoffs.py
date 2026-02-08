@@ -183,6 +183,70 @@ def get_podium_by_year(standings_df: pd.DataFrame, matchups_df: pd.DataFrame = N
     return pd.DataFrame(podium_data)
 
 
+def get_regular_season_standings_by_year(standings_df: pd.DataFrame) -> pd.DataFrame:
+    """Get regular season standings (top 3) for each year.
+
+    Args:
+        standings_df: DataFrame from fetch_all_standings with rank info
+
+    Returns:
+        DataFrame with season, 1st place, 2nd place, 3rd place based on regular season
+    """
+    if standings_df.empty or "rank" not in standings_df.columns:
+        return pd.DataFrame()
+
+    standings_data = []
+
+    for season in sorted(standings_df["season"].unique(), reverse=True):
+        season_df = standings_df[standings_df["season"] == season]
+
+        first = season_df[season_df["rank"] == 1]["team_name"].values
+        second = season_df[season_df["rank"] == 2]["team_name"].values
+        third = season_df[season_df["rank"] == 3]["team_name"].values
+
+        standings_data.append({
+            "season": season,
+            "1st": first[0] if len(first) > 0 else "",
+            "2nd": second[0] if len(second) > 0 else "",
+            "3rd": third[0] if len(third) > 0 else "",
+        })
+
+    return pd.DataFrame(standings_data)
+
+
+def get_regular_season_placement_counts(standings_df: pd.DataFrame) -> pd.DataFrame:
+    """Get regular season 1st, 2nd, 3rd place finishes by manager.
+
+    Args:
+        standings_df: DataFrame from fetch_all_standings with rank info
+
+    Returns:
+        DataFrame with team_name, 1st, 2nd, 3rd, total_top3, seasons
+    """
+    if standings_df.empty or "rank" not in standings_df.columns:
+        return pd.DataFrame()
+
+    # Count placements based on regular season rank
+    standings_copy = standings_df.copy()
+    standings_copy["first"] = (standings_copy["rank"] == 1).astype(int)
+    standings_copy["second"] = (standings_copy["rank"] == 2).astype(int)
+    standings_copy["third"] = (standings_copy["rank"] == 3).astype(int)
+
+    placements = standings_copy.groupby("team_name").agg({
+        "first": "sum",
+        "second": "sum",
+        "third": "sum",
+        "season": "count",
+    }).reset_index()
+
+    placements.columns = ["team_name", "1st", "2nd", "3rd", "seasons"]
+    placements["total_top3"] = placements["1st"] + placements["2nd"] + placements["3rd"]
+
+    return placements.sort_values(
+        ["1st", "2nd", "3rd", "total_top3"], ascending=[False, False, False, False]
+    ).reset_index(drop=True)
+
+
 def get_playoff_records(matchups_df: pd.DataFrame) -> pd.DataFrame:
     """Get playoff win/loss records by team.
 
